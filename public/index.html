@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DIUBI — prototyp real-time</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --muted: #8a92a3;
+    --accent: #4f8cff;
+    --error: #ff5a5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 48px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 0.9rem; }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    width: 100%;
+    max-width: 900px;
+  }
+  label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  input {
+    background: #0d0f13;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    width: 90px;
+    font-size: 0.9rem;
+  }
+  button {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #startBtn { background: var(--accent); color: white; }
+  #stopBtn { background: #2a2f3a; color: var(--text); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #status { font-size: 0.85rem; color: var(--muted); margin-top: 12px; min-height: 1.2em; }
+  #status.error { color: var(--error); }
+  .panels {
+    width: 100%;
+    max-width: 900px;
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    min-height: 160px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .line { margin: 0 0 6px; line-height: 1.5; }
+  .line.live { color: var(--accent); }
+  #original .line { color: #c7cbd4; }
+  #original .line.live { color: var(--text); }
+  #translation .line { color: #d8e6ff; font-weight: 500; }
+  .hint { max-width: 900px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <h1>DIUBI — prototyp tlumaczenia na zywo</h1>
+  <p class="subtitle">Podpiecie napisow na zywo pod dowolne audio odtwarzane w karcie przegladarki</p>
+
+  <div class="controls">
+    <div>
+      <label for="sourceLang">Jezyk zrodlowy (puste = auto)</label>
+      <input id="sourceLang" placeholder="np. es" />
+    </div>
+    <div>
+      <label for="targetLang">Jezyk docelowy</label>
+      <input id="targetLang" value="pl" />
+    </div>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+  <div id="status"></div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Oryginal</h2>
+      <div id="original"></div>
+    </div>
+    <div class="panel">
+      <h2>Tlumaczenie</h2>
+      <div id="translation"></div>
+    </div>
+  </div>
+
+  <p class="hint">
+    Klikajac "Start" wybierz w oknie przegladarki kartę, w której leci audio (np. otwarty w drugiej karcie odcinek
+    Dreaming Spanish) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio". Obraz nie jest wymagany —
+    liczy sie tylko sciezka dzwiekowa.
+  </p>
+
+  <script src="app.js"></script>
+</body>
+</html>
