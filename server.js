@@ -99,11 +99,12 @@ class TranscriptionSession {
                   model: TRANSCRIBE_MODEL,
                   ...(this.sourceLang ? { language: this.sourceLang } : {}),
                 },
+                noise_reduction: { type: "near_field" },
                 turn_detection: {
                   type: "server_vad",
-                  threshold: 0.5,
+                  threshold: 0.6,
                   prefix_padding_ms: 300,
-                  silence_duration_ms: 500,
+                  silence_duration_ms: 700,
                 },
               },
             },
@@ -143,7 +144,9 @@ class TranscriptionSession {
 
       case "conversation.item.input_audio_transcription.completed": {
         const text = (event.transcript || "").trim();
-        if (text) {
+        // Single-character transcripts are almost always ASR noise from a
+        // spurious VAD-triggered segment (silence, breath, background hum).
+        if (text.length > 1) {
           sendJson(this.clientWs, { type: "transcript_final", text });
           this.translate(text);
         }
