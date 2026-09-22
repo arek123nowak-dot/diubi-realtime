@@ -6,7 +6,7 @@ const translationEl = document.getElementById("translation");
 const sourceLangInput = document.getElementById("sourceLang");
 const targetLangInput = document.getElementById("targetLang");
 
-const TARGET_SAMPLE_RATE = 16000;
+const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 
 let ws = null;
 let audioContext = null;

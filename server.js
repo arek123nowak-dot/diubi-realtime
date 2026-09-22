@@ -10,7 +10,7 @@ const DEFAULT_SOURCE_LANG = process.env.SOURCE_LANG || ""; // empty = auto-detec
 const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime-1.5";
-const TARGET_SAMPLE_RATE = 16000; // must match the downsampling rate in public/app.js
+const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
 const PORT = process.env.PORT || 3000;
 
 const app = express();
