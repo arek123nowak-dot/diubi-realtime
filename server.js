@@ -9,7 +9,6 @@ const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || "pl";
 const DEFAULT_SOURCE_LANG = process.env.SOURCE_LANG || ""; // empty = auto-detect
 const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
-const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime-1.5";
 const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
 const PORT = process.env.PORT || 3000;
 
@@ -74,9 +73,12 @@ class TranscriptionSession {
   }
 
   start() {
-    // GA Realtime API (post 2026-05-12): no OpenAI-Beta header, no ?intent=
-    // query param, and audio config now nests under session.audio.input.
-    const upstream = new WebSocket(`wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`, {
+    // GA Realtime API (post 2026-05-12): ?intent=transcription still selects
+    // a transcription-only session, but the OpenAI-Beta header is gone and
+    // ?model= must be omitted here (it forces a full voice-agent session,
+    // which then rejects a transcription-type session.update). The model
+    // for transcription belongs in session.audio.input.transcription.model.
+    const upstream = new WebSocket("wss://api.openai.com/v1/realtime?intent=transcription", {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
