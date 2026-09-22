@@ -173,6 +173,7 @@ class TranscriptionSession {
   }
 
   async translate(sourceText) {
+    console.log("[translate] starting for:", sourceText);
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -196,6 +197,7 @@ class TranscriptionSession {
         }),
       });
 
+      console.log("[translate] response status:", response.status);
       if (!response.ok || !response.body) {
         const errText = await response.text().catch(() => "");
         throw new Error(`HTTP ${response.status}: ${errText}`);
@@ -216,6 +218,7 @@ class TranscriptionSession {
         }
       }
 
+      console.log("[translate] done:", translated);
       sendJson(this.clientWs, { type: "translation_final", text: translated, source: sourceText });
     } catch (err) {
       console.error("[translate] error:", err.message);
