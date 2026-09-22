@@ -10,6 +10,7 @@ const DEFAULT_SOURCE_LANG = process.env.SOURCE_LANG || ""; // empty = auto-detec
 const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime-1.5";
+const TARGET_SAMPLE_RATE = 16000; // must match the downsampling rate in public/app.js
 const PORT = process.env.PORT || 3000;
 
 const app = express();
@@ -91,7 +92,7 @@ class TranscriptionSession {
             type: "transcription",
             audio: {
               input: {
-                format: "pcm16",
+                format: { type: "audio/pcm", rate: TARGET_SAMPLE_RATE },
                 transcription: {
                   model: TRANSCRIBE_MODEL,
                   ...(this.sourceLang ? { language: this.sourceLang } : {}),
