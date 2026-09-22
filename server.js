@@ -173,7 +173,6 @@ class TranscriptionSession {
   }
 
   async translate(sourceText) {
-    console.log("[translate] starting for:", sourceText);
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -197,7 +196,6 @@ class TranscriptionSession {
         }),
       });
 
-      console.log("[translate] response status:", response.status);
       if (!response.ok || !response.body) {
         const errText = await response.text().catch(() => "");
         throw new Error(`HTTP ${response.status}: ${errText}`);
@@ -218,7 +216,6 @@ class TranscriptionSession {
         }
       }
 
-      console.log("[translate] done:", translated);
       sendJson(this.clientWs, { type: "translation_final", text: translated, source: sourceText });
     } catch (err) {
       console.error("[translate] error:", err.message);
@@ -239,7 +236,10 @@ class TranscriptionSession {
 async function* sseLines(body) {
   let buffer = "";
   for await (const chunk of body) {
-    buffer += chunk.toString("utf8");
+    // fetch's response.body yields Uint8Array, not Node Buffer — Uint8Array's
+    // own .toString() ignores the "utf8" arg and prints comma-joined byte
+    // numbers instead, so every chunk decoded as garbage until wrapped here.
+    buffer += Buffer.from(chunk).toString("utf8");
     let idx;
     while ((idx = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, idx).trim();
