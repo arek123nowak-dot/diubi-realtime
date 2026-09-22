@@ -72,10 +72,11 @@ class TranscriptionSession {
   }
 
   start() {
-    const upstream = new WebSocket("wss://api.openai.com/v1/realtime?intent=transcription", {
+    // GA Realtime API (post 2026-05-12): no OpenAI-Beta header, no ?intent=
+    // query param, and audio config now nests under session.audio.input.
+    const upstream = new WebSocket("wss://api.openai.com/v1/realtime", {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1",
       },
     });
     this.upstream = upstream;
@@ -84,18 +85,23 @@ class TranscriptionSession {
       console.log("[openai] transcription session open");
       upstream.send(
         JSON.stringify({
-          type: "transcription_session.update",
+          type: "session.update",
           session: {
-            input_audio_format: "pcm16",
-            input_audio_transcription: {
-              model: TRANSCRIBE_MODEL,
-              ...(this.sourceLang ? { language: this.sourceLang } : {}),
-            },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+            type: "transcription",
+            audio: {
+              input: {
+                format: "pcm16",
+                transcription: {
+                  model: TRANSCRIBE_MODEL,
+                  ...(this.sourceLang ? { language: this.sourceLang } : {}),
+                },
+                turn_detection: {
+                  type: "server_vad",
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 500,
+                },
+              },
             },
           },
         })
@@ -103,7 +109,10 @@ class TranscriptionSession {
       sendJson(this.clientWs, { type: "status", message: "polaczono z ASR" });
     });
 
-    upstream.on("message", (raw) => this.handleUpstreamEvent(raw));
+    upstream.on("message", (raw) => {
+      console.log("[openai] event:", raw.toString());
+      this.handleUpstreamEvent(raw);
+    });
 
     upstream.on("error", (err) => {
       console.error("[openai] ws error:", err.message);
