@@ -88,6 +88,11 @@ async function start() {
     displayStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,
+      // Chrome-only: without this, the calling tab itself is excluded from
+      // the share picker, which is exactly the tab we actually want here
+      // (the one with the embedded player). Unsupported browsers just
+      // ignore the unknown property.
+      preferCurrentTab: true,
     });
   } catch (err) {
     setStatus(`Nie udalo sie uzyskac dostepu do audio: ${err.message}`, true);
