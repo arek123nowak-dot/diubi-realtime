@@ -76,6 +76,12 @@ class TranscriptionSession {
     // handshake used to be silently dropped, which lost the first couple
     // seconds of a video that starts autoplaying the instant it's loaded.
     this.pendingAudio = [];
+    // Tracks which writing system this session's speech has actually used,
+    // so short bursts in an unrelated script (ASR hallucinating on silence
+    // or background noise) can be told apart from genuine content — without
+    // ever hardcoding an expected language, since the source is auto-detected
+    // and could legitimately be anything.
+    this.scriptCounts = {};
   }
 
   start() {
@@ -161,7 +167,7 @@ class TranscriptionSession {
         const text = (event.transcript || "").trim();
         // Single-character transcripts are almost always ASR noise from a
         // spurious VAD-triggered segment (silence, breath, background hum).
-        if (text.length > 1) {
+        if (text.length > 1 && !this.isScriptOutlier(text)) {
           const segmentId = ++this.segmentCounter;
           sendJson(this.clientWs, { type: "transcript_final", text, segmentId });
           this.translate(text, segmentId);
@@ -181,6 +187,31 @@ class TranscriptionSession {
         // Inne typy eventow (np. sygnaly VAD) na razie ignorujemy.
         break;
     }
+  }
+
+  /**
+   * True if `text` is a short burst in a writing system this session hasn't
+   * actually been using — almost always the transcribe model hallucinating
+   * over silence/noise/music rather than real speech. Longer stretches in a
+   * different script are let through (a genuine switch to another language
+   * doesn't look like a two-word hallucination), and nothing is flagged
+   * until a dominant script has clearly established itself from real
+   * segments, so this never hardcodes an expected source language.
+   */
+  isScriptOutlier(text) {
+    const script = detectScript(text);
+    const total = Object.values(this.scriptCounts).reduce((sum, n) => sum + n, 0);
+
+    if (total >= 3) {
+      const [dominantScript, dominantCount] = Object.entries(this.scriptCounts).sort((a, b) => b[1] - a[1])[0];
+      if (dominantCount / total >= 0.7 && script !== dominantScript && text.length < 20) {
+        console.log(`[filter] dropped script-outlier segment (${script} vs dominant ${dominantScript}): "${text}"`);
+        return true;
+      }
+    }
+
+    this.scriptCounts[script] = (this.scriptCounts[script] || 0) + 1;
+    return false;
   }
 
   sendAudioChunk(base64Audio) {
@@ -253,6 +284,27 @@ class TranscriptionSession {
       this.upstream.close();
     }
   }
+}
+
+const SCRIPT_RANGES = [
+  ["cyrillic", /[Ѐ-ӿ]/],
+  ["arabic", /[؀-ۿ]/],
+  ["hebrew", /[֐-׿]/],
+  ["greek", /[Ͱ-Ͽ]/],
+  ["devanagari", /[ऀ-ॿ]/],
+  ["thai", /[฀-๿]/],
+  ["hangul", /[가-힯ᄀ-ᇿ]/],
+  ["hiragana_katakana", /[぀-ヿ]/],
+  ["cjk", /[㐀-鿿豈-﫿]/],
+];
+
+/** Labels the dominant writing system in `text`; defaults to "latin" (covers
+ * Spanish/English/German/etc., including accented characters). */
+function detectScript(text) {
+  for (const [script, pattern] of SCRIPT_RANGES) {
+    if (pattern.test(text)) return script;
+  }
+  return "latin";
 }
 
 /** Iterates an SSE (text/event-stream) body, yielding each `data:` payload. */
