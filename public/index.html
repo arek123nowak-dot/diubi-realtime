@@ -122,7 +122,7 @@
     margin-top: 10px;
   }
   label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
-  input {
+  input, select {
     background: #0d0f13;
     border: 1px solid var(--border);
     color: var(--text);
@@ -131,6 +131,7 @@
     width: 90px;
     font-size: 0.9rem;
   }
+  #targetLang { width: 150px; }
   button {
     border: none;
     border-radius: 8px;
@@ -229,7 +230,28 @@
   <div class="controls">
     <div>
       <label for="targetLang">Jezyk docelowy (tlumaczenie)</label>
-      <input id="targetLang" value="pl" />
+      <select id="targetLang">
+        <option value="pl" selected>Polski</option>
+        <option value="en">English</option>
+        <option value="es">Espanol</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Francais</option>
+        <option value="it">Italiano</option>
+        <option value="pt">Portugues</option>
+        <option value="nl">Nederlands</option>
+        <option value="sv">Svenska</option>
+        <option value="cs">Cestina</option>
+        <option value="ro">Romana</option>
+        <option value="uk">Ukrainska</option>
+        <option value="ru">Rosyjski</option>
+        <option value="tr">Turecki</option>
+        <option value="el">Greckie</option>
+        <option value="ar">Arabski</option>
+        <option value="hi">Hindi</option>
+        <option value="ja">Japonski</option>
+        <option value="ko">Koreanski</option>
+        <option value="zh">Chinski</option>
+      </select>
     </div>
     <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
