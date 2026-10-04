@@ -10,13 +10,13 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.target !== "offscreen") return;
 
   if (message.type === "start-capture") {
-    startCapture(message.streamId, message.targetLang, message.wsUrl);
+    startCapture(message.streamId, message.targetLang, message.wsUrl, message.userId);
   } else if (message.type === "stop-capture") {
     stopCapture();
   }
 });
 
-async function startCapture(streamId, targetLang, wsUrl) {
+async function startCapture(streamId, targetLang, wsUrl, userId) {
   stopCapture(); // clean slate if something was already running
 
   captureStream = await navigator.mediaDevices.getUserMedia({
@@ -41,7 +41,7 @@ async function startCapture(streamId, targetLang, wsUrl) {
   processorNode = audioContext.createScriptProcessor(4096, inputChannels, 1);
   const ratio = audioContext.sampleRate / TARGET_SAMPLE_RATE;
 
-  ws = new WebSocket(`${wsUrl}?target=${encodeURIComponent(targetLang)}`);
+  ws = new WebSocket(`${wsUrl}?target=${encodeURIComponent(targetLang)}&user=${encodeURIComponent(userId || "")}`);
 
   ws.onopen = () => relay({ type: "status", message: "Polaczono, uruchamiam przechwytywanie..." });
   ws.onmessage = (event) => relay(JSON.parse(event.data));

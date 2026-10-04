@@ -5,6 +5,7 @@ const express = require("express");
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const { listPhrases, addPhrase, deletePhrase } = require("./store");
+const { getUsageMinutes, addUsageMs } = require("./usage");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || "pl";
@@ -13,6 +14,21 @@ const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
 const PORT = process.env.PORT || 3000;
+
+// Per-device (anonymous userId, same one used for the notebook) and
+// server-wide daily listening caps — the only realistic way to stop a
+// public link from accidentally running up a large OpenAI bill before real
+// accounts/billing exist. Not hardened against someone deliberately
+// clearing their browser storage to reset their own counter - that's an
+// acceptable gap for a friends-and-testers rollout, not a public launch.
+// `env || default` would silently discard a deliberately-set 0 (falsy in
+// JS) - matters here since 0 is a legitimate "pause everyone" value.
+function envNumber(name, fallback) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+const MAX_USER_MINUTES_PER_DAY = envNumber("MAX_USER_MINUTES_PER_DAY", 30);
+const MAX_GLOBAL_MINUTES_PER_DAY = envNumber("MAX_GLOBAL_MINUTES_PER_DAY", 300);
 
 // TEMPORARY, for the [USAGE] cost measurement only — public pricing as of
 // this writing (not re-verified against the official OpenAI cennik from
@@ -176,8 +192,13 @@ wss.on("connection", (clientWs, req) => {
   const url = new URL(req.url, "http://localhost");
   const targetLang = url.searchParams.get("target") || DEFAULT_TARGET_LANG;
   const sourceLang = url.searchParams.get("source") || DEFAULT_SOURCE_LANG;
+  // Falls back to a shared "anonymous" bucket for any client that somehow
+  // doesn't send one (e.g. a cached page from before this existed) rather
+  // than refusing the connection outright - still covered by the global
+  // cap either way.
+  const userId = url.searchParams.get("user") || "anonymous";
 
-  console.log(`[client] connected (source=${sourceLang || "auto"} target=${targetLang})`);
+  console.log(`[client] connected (source=${sourceLang || "auto"} target=${targetLang} user=${userId})`);
 
   if (!OPENAI_API_KEY) {
     sendJson(clientWs, { type: "error", message: "Brak OPENAI_API_KEY na serwerze. Uzupelnij plik .env." });
@@ -185,7 +206,28 @@ wss.on("connection", (clientWs, req) => {
     return;
   }
 
-  const session = new TranscriptionSession({ clientWs, sourceLang, targetLang });
+  // Checked (and rejected) BEFORE opening the OpenAI connection, so an
+  // already-exhausted limit costs nothing instead of spending a few more
+  // seconds of audio while the session spins up.
+  const { userMinutes, globalMinutes } = getUsageMinutes(userId);
+  if (userMinutes >= MAX_USER_MINUTES_PER_DAY) {
+    sendJson(clientWs, {
+      type: "error",
+      message: `Osiagnieto dzienny limit nasluchu (${MAX_USER_MINUTES_PER_DAY} min). Wroc jutro.`,
+    });
+    clientWs.close();
+    return;
+  }
+  if (globalMinutes >= MAX_GLOBAL_MINUTES_PER_DAY) {
+    sendJson(clientWs, {
+      type: "error",
+      message: "Dzienny limit calej aplikacji zostal wyczerpany. Sprobuj jutro.",
+    });
+    clientWs.close();
+    return;
+  }
+
+  const session = new TranscriptionSession({ clientWs, sourceLang, targetLang, userId });
   session.start();
 
   clientWs.on("message", (raw) => {
@@ -218,10 +260,13 @@ wss.on("connection", (clientWs, req) => {
  * every completed source-language sentence it receives back.
  */
 class TranscriptionSession {
-  constructor({ clientWs, sourceLang, targetLang }) {
+  constructor({ clientWs, sourceLang, targetLang, userId }) {
     this.clientWs = clientWs;
     this.sourceLang = sourceLang;
     this.targetLang = targetLang;
+    this.userId = userId;
+    this.lastUsageFlushAt = Date.now();
+    this.usageCheckTimer = null;
     this.upstream = null;
     this.closed = false;
     this.segmentCounter = 0;
@@ -377,6 +422,33 @@ class TranscriptionSession {
           this.textBufferStartedAt = null;
         }
       }, 2000);
+
+      // Flushes elapsed listening time into today's usage tally periodically
+      // (not just once at the end) so a single long-running session can't
+      // blow straight through the daily cap before anything notices — this
+      // check is what actually enforces the limit mid-session, not just at
+      // connection time.
+      this.usageCheckTimer = setInterval(() => {
+        const now = Date.now();
+        const deltaMs = now - this.lastUsageFlushAt;
+        this.lastUsageFlushAt = now;
+        const { userMinutes, globalMinutes } = addUsageMs(this.userId, deltaMs);
+        if (userMinutes >= MAX_USER_MINUTES_PER_DAY) {
+          sendJson(this.clientWs, {
+            type: "error",
+            message: `Osiagnieto dzienny limit nasluchu (${MAX_USER_MINUTES_PER_DAY} min). Wroc jutro.`,
+          });
+          this.stop();
+          this.clientWs.close();
+        } else if (globalMinutes >= MAX_GLOBAL_MINUTES_PER_DAY) {
+          sendJson(this.clientWs, {
+            type: "error",
+            message: "Dzienny limit calej aplikacji zostal wyczerpany. Sprobuj jutro.",
+          });
+          this.stop();
+          this.clientWs.close();
+        }
+      }, 30000);
     });
 
     upstream.on("message", (raw) => {
@@ -627,9 +699,14 @@ class TranscriptionSession {
     this.closed = true;
     clearInterval(this.forceCommitTimer);
     clearInterval(this.idleFlushTimer);
+    clearInterval(this.usageCheckTimer);
     if (this.upstream && this.upstream.readyState === WebSocket.OPEN) {
       this.upstream.close();
     }
+
+    // Final flush so a manually-stopped session's last partial minute still
+    // counts — the 30s periodic flush above only catches whole intervals.
+    addUsageMs(this.userId, Date.now() - this.lastUsageFlushAt);
 
     // TEMPORARY: wall-clock session length next to actual audio forwarded
     // and translation request count — paired with the [USAGE] token counts

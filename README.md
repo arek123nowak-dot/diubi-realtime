@@ -63,14 +63,50 @@ Postgres (patrz `store.js` — jedna tabela, migracja 1:1).
   odzwierciedlają dokumentację OpenAI sprzed cutoffu wiedzy — jeśli po
   pierwszym teście dostaniesz błąd o nieznanym evencie/modelu, wklej mi
   dokładny komunikat z konsoli serwera, dostosuję kod do aktualnego API.
-- Brak jakiejkolwiek autoryzacji/kontroli kosztów — każda sekunda audio to
-  realne zużycie API OpenAI. Nie zostawiaj uruchomionego bez nadzoru.
+- Dzienne limity nasłuchu (`MAX_USER_MINUTES_PER_DAY`, domyślnie 30 min na
+  anonimowe urządzenie, i `MAX_GLOBAL_MINUTES_PER_DAY`, domyślnie 300 min
+  łącznie) chronią przed przypadkowym przepaleniem budżetu, ale **nie są
+  twardym zabezpieczeniem** — opierają się na tym samym anonimowym ID co
+  pamiętnik, więc ktoś czyszczący dane przeglądarki resetuje sobie licznik.
+  Wystarczające na testy ze znajomymi, nie na publiczny launch bez kontroli.
+
+## Wdrożenie publiczne (Render)
+
+Dziś backend działa tylko na `localhost` — poniższe kroki wystawiają go pod
+publicznym adresem, żeby ktoś poza Tobą (np. nauczycielka testująca MVP)
+mógł z niego skorzystać bez uruchamiania czegokolwiek na własnym komputerze.
+
+1. Wypchnij repo na GitHub (już zrobione, jeśli czytasz to stąd).
+2. Na [render.com](https://render.com): **New +** → **Web Service** → połącz
+   repo `diubi-realtime`.
+3. Ustawienia: Build Command `npm install`, Start Command `npm start`.
+4. W zakładce **Environment** dodaj zmienne z `.env.example` (przede
+   wszystkim `OPENAI_API_KEY`) — Render sam ustawia `PORT`, nie trzeba go
+   podawać ręcznie.
+5. Deploy. Render da publiczny adres `https://<nazwa>.onrender.com` —
+   właśnie ten link (nie `localhost:3000`) wklejasz do `BACKEND_WS_URL` w
+   `extension/background.js`, jeśli chcesz, żeby rozszerzenie też łączyło
+   się z publicznym backendem zamiast lokalnego.
+
+**Ważne zastrzeżenie:** `data/phrases.json` i `data/usage.json` to zwykłe
+pliki na dysku kontenera. Na darmowym tierze Render dysk jest efemeryczny —
+**każdy redeploy czyści pamiętnik i liczniki limitów**. Do krótkiego testu
+ze znajomymi to akceptowalne ryzyko (i tak zaczynamy liczenie od zera), ale
+nie nadaje się pod dłuższe użytkowanie — wtedy naturalny krok to migracja na
+Postgres (Render ma go jako dodatkowy, płatny serwis), o czym niżej.
 
 ## Następne kroki (do decyzji)
 
-1. Publiczne wdrożenie backendu (Render/Railway) — dziś działa tylko lokalnie
-   (`localhost:3000`), więc tylko Ty możesz go używać.
-2. Prawdziwe konto (magic link albo Google OAuth) w miejsce anonimowego ID.
-3. Migracja `store.js` z pliku JSON na Postgres (naturalny moment: razem z
-   publicznym wdrożeniem).
+1. Prawdziwe konto (magic link albo Google OAuth) w miejsce anonimowego ID —
+   usuwa też furtkę resetowania limitu przez wyczyszczenie danych przeglądarki.
+2. Migracja `store.js` i `usage.js` z plików JSON na Postgres — konieczne,
+   jeśli wdrożenie ma przetrwać dłużej niż jeden test (patrz zastrzeżenie
+   wyżej), nie tylko "ładniejsze".
+3. Publikacja rozszerzenia w Chrome Web Store — dziś instaluje się tylko
+   przez "Load unpacked" w trybie developerskim, co nie nadaje się do
+   wysłania komuś jako link.
 4. Prosty tryb powtórek na bazie zapisanych fraz w pamiętniku.
+5. Aplikacja mobilna — docelowy kanał, ale przechwytywanie dźwięku z innej
+   aplikacji jest na iOS/Androidzie dużo bardziej ograniczone niż
+   `tabCapture` w Chrome; wymaga osobnej decyzji architektonicznej, nie
+   rozszerzenia obecnego podejścia.

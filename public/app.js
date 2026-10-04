@@ -261,8 +261,9 @@ function openSocket() {
   // Source language is always auto-detected server-side — the user only
   // ever picks the target language they want to read.
   const target = encodeURIComponent(targetLangInput.value.trim() || "pl");
+  const user = encodeURIComponent(getUserId());
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/stream?target=${target}`);
+  ws = new WebSocket(`${proto}://${location.host}/stream?target=${target}&user=${user}`);
 
   ws.onopen = () => {
     setStatus("Polaczono. Uruchamiam przechwytywanie audio...");

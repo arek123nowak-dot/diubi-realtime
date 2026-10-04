@@ -22,6 +22,19 @@ async function setActiveTabId(tabId) {
   }
 }
 
+// Same persistent anonymous ID (and same storage key) content.js already
+// uses for the notebook - reused here so the backend can apply its daily
+// listening-time cap per device without any real login. chrome.storage.local
+// (unlike .session) survives service worker restarts AND browser restarts,
+// which is what we want for something meant to persist across days.
+async function getUserId() {
+  const { diubiUserId } = await chrome.storage.local.get("diubiUserId");
+  if (diubiUserId) return diubiUserId;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ diubiUserId: id });
+  return id;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === "background" && message.type === "relay") {
     // Caption/status/error events from the offscreen document — forward to
@@ -82,11 +95,13 @@ async function startCapture(tabId, targetLang) {
   await setActiveTabId(tabId);
   chrome.tabs.sendMessage(tabId, { type: "show-overlay", targetLang }).catch(() => {});
 
+  const userId = await getUserId();
   chrome.runtime.sendMessage({
     target: "offscreen",
     type: "start-capture",
     streamId,
     targetLang,
+    userId,
     wsUrl: BACKEND_WS_URL,
   });
 }

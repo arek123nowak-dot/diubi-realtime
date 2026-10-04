@@ -47,10 +47,13 @@ npm start
 
 ## Znane ograniczenia tego prototypu
 
-- Backend jest skonfigurowany na `ws://localhost:3000` (`background.js`,
-  stala `BACKEND_WS_URL`) — dziala tylko gdy serwer dziala lokalnie na tym
-  samym komputerze. Docelowo backend trzeba bedzie wystawic publicznie
-  (np. na Render/Railway), zeby rozszerzenie dzialalo bez wlasnego serwera.
+- Backend jest skonfigurowany na localhost (dwie stale do zmiany po
+  publicznym wdrozeniu — patrz glowny README, sekcja "Wdrozenie publiczne"):
+  `BACKEND_WS_URL` w `background.js` (`ws://localhost:3000/stream`) i
+  `BACKEND_HTTP_URL` w `content.js` (`http://localhost:3000`). Dla backendu
+  wdrozonego na Render/Railway (HTTPS) to musi byc `wss://` i `https://`,
+  nie `ws://`/`http://` — przegladarka blokuje polaczenie z bezpiecznej
+  strony (youtube.com) do niezaszyfrowanego adresu.
 - Jedna aktywna sesja naslchu naraz (nowy Start na innej karcie zatrzymuje
   poprzedni).
 - Overlay nie zapamietuje pozycji po przeciagnieciu miedzy sesjami.
