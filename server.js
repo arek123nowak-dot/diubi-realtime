@@ -97,6 +97,7 @@ class TranscriptionSession {
     // that's just as likely to land mid-word.
     this.recentAmplitude = 0;
     this.sinceLastCommitAt = Date.now();
+    this.quietSinceMs = null;
   }
 
   start() {
@@ -127,18 +128,16 @@ class TranscriptionSession {
                   ...(this.sourceLang ? { language: this.sourceLang } : {}),
                 },
                 noise_reduction: { type: "near_field" },
-                turn_detection: {
-                  type: "server_vad",
-                  threshold: 0.5,
-                  prefix_padding_ms: 300,
-                  // VAD only controls how audio gets chunked for transcription
-                  // in this session type — this is the main lever for how
-                  // long speech sits unprocessed before anything happens.
-                  // Pulled back down from 700ms now that the script-outlier
-                  // and 1-char filters catch more of the resulting noise, so
-                  // this can prioritize responsiveness again.
-                  silence_duration_ms: 450,
-                },
+                // Automatic server_vad and our own forced periodic commits
+                // (see the timer below) turned out not to coexist cleanly —
+                // a manual commit landing anywhere near when VAD auto-commits
+                // reliably hit an already-empty buffer and errored, in
+                // practice far more often than a rare race (confirmed in
+                // testing: a sustained error loop, not an occasional one).
+                // Disabling VAD and driving 100% of the chunking ourselves
+                // (via recentAmplitude, same mechanism as before) removes the
+                // two mechanisms fighting over the same buffer.
+                turn_detection: null,
               },
             },
           },
@@ -155,34 +154,44 @@ class TranscriptionSession {
       sendJson(this.clientWs, { type: "status", message: "polaczono z ASR" });
       sendJson(this.clientWs, { type: "ready" });
 
-      // Natural VAD silence can be 15-20+ seconds away during fast,
-      // continuous speech (confirmed in testing) — nothing transcribes at
-      // all until then, since VAD is what triggers OpenAI to even start
-      // processing a chunk. Forcing a commit once speech has run past 5s
-      // keeps transcription (and translation) roughly in pace even when the
-      // speaker never pauses; the cross-chunk sentence buffer is what stops
-      // that from translating a sentence broken in half.
-      //
-      // Checked every 200ms rather than fired blindly every 5s: cutting the
-      // instant the 5s mark is hit landed mid-word as often as not. Instead
-      // this waits (up to 3 more seconds) for recentAmplitude to dip —  a
-      // micro-pause between words/syllables, shorter than what VAD's own
-      // silence_duration_ms requires but usually enough to avoid slicing a
-      // word in half. Past 8s total it commits anyway rather than hold out
-      // for a dip that may not come during truly continuous speech.
-      const FORCE_COMMIT_AFTER_MS = 5000;
-      const FORCE_COMMIT_HARD_CAP_MS = 8000;
+      // With turn_detection disabled above, this is now the ONLY thing
+      // deciding when audio gets committed for transcription — our own
+      // minimal VAD, built on the same recentAmplitude (RMS) reading
+      // computed per chunk in sendAudioChunk:
+      //   - commits on a genuine pause (quiet for QUIET_HOLD_MS), same idea
+      //     as OpenAI's silence_duration_ms, so natural sentence breaks
+      //     still produce natural commit points
+      //   - otherwise commits anyway once a chunk has run MAX_CHUNK_MS, so
+      //     continuous/fast speech with no real pause still gets
+      //     transcribed regularly instead of piling up for 15-20+ seconds
+      //   - never commits before MIN_CHUNK_MS, so a brief pause right after
+      //     the previous commit doesn't immediately trigger another
+      //     near-empty one
+      const MIN_CHUNK_MS = 600;
+      const MAX_CHUNK_MS = 6000;
       const QUIET_AMPLITUDE = 500; // out of 32767 (Int16 full scale)
+      const QUIET_HOLD_MS = 450; // matches the old server_vad silence_duration_ms
 
       this.forceCommitTimer = setInterval(() => {
         if (!this.hasUncommittedAudio || !this.upstreamReady || this.upstream?.readyState !== WebSocket.OPEN) return;
-        const elapsed = Date.now() - this.sinceLastCommitAt;
-        if (elapsed < FORCE_COMMIT_AFTER_MS) return;
-        if (elapsed < FORCE_COMMIT_HARD_CAP_MS && this.recentAmplitude >= QUIET_AMPLITUDE) return;
+
+        const now = Date.now();
+        const elapsed = now - this.sinceLastCommitAt;
+        if (elapsed < MIN_CHUNK_MS) return;
+
+        if (this.recentAmplitude < QUIET_AMPLITUDE) {
+          if (!this.quietSinceMs) this.quietSinceMs = now;
+        } else {
+          this.quietSinceMs = null;
+        }
+        const quietElapsed = this.quietSinceMs ? now - this.quietSinceMs : 0;
+
+        if (quietElapsed < QUIET_HOLD_MS && elapsed < MAX_CHUNK_MS) return;
 
         this.upstream.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
         this.hasUncommittedAudio = false;
-        this.sinceLastCommitAt = Date.now();
+        this.sinceLastCommitAt = now;
+        this.quietSinceMs = null;
       }, 200);
 
       // Safety net: if the buffer has a dangling fragment (last chunk
