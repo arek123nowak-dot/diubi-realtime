@@ -195,6 +195,12 @@
     font-weight: 500;
   }
   .cell.translation.active { background: rgba(76, 175, 80, 0.22); }
+  .cell.translation.failed {
+    background: rgba(255, 107, 107, 0.15);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--muted, #8a92a3);
+  }
   .cell:empty::after { content: "\00a0"; }
   .hint {
     max-width: 1000px;

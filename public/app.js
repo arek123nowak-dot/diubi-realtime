@@ -296,6 +296,18 @@ function handleServerMessage(msg) {
       scrollToBottom();
       break;
     }
+    case "translation_error": {
+      // Marked on the specific row that failed (after the server already
+      // retried) rather than only a generic status-bar message, so it's
+      // obvious which line is missing its translation instead of that row
+      // just sitting blank with no explanation.
+      const row = getOrCreateRow(msg.segmentId);
+      row.translationCell.textContent = "Nie udalo sie przetlumaczyc tej linii.";
+      row.translationCell.classList.remove("active");
+      row.translationCell.classList.add("failed");
+      scrollToBottom();
+      break;
+    }
   }
 }
 

@@ -358,7 +358,10 @@ class TranscriptionSession {
     }
   }
 
-  async translate(sourceText, segmentId) {
+  async translate(sourceText, segmentId, attempt = 1) {
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAY_MS = [500, 1500]; // before attempt 2 and attempt 3
+
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -384,7 +387,9 @@ class TranscriptionSession {
 
       if (!response.ok || !response.body) {
         const errText = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${errText}`);
+        const err = new Error(`HTTP ${response.status}: ${errText}`);
+        err.retryable = response.status === 429 || response.status >= 500;
+        throw err;
       }
 
       let translated = "";
@@ -404,8 +409,24 @@ class TranscriptionSession {
 
       sendJson(this.clientWs, { type: "translation_final", text: translated, segmentId });
     } catch (err) {
+      // Network-level failures (fetch throwing outright, e.g. a dropped
+      // connection) and rate-limit/server errors are almost always transient
+      // — a blind retry fixes most of them. A real client-side problem
+      // (bad API key, malformed request) is marked non-retryable above and
+      // fails immediately instead of retrying something that can't succeed.
+      const retryable = err.retryable !== false;
+      if (retryable && attempt < MAX_ATTEMPTS) {
+        console.warn(`[translate] attempt ${attempt} failed (${err.message}), retrying...`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS[attempt - 1]));
+        return this.translate(sourceText, segmentId, attempt + 1);
+      }
+
       console.error("[translate] error:", err.message);
-      sendJson(this.clientWs, { type: "error", message: `Blad tlumaczenia: ${err.message}` });
+      // Scoped to this segment (not a generic status-bar message) so the
+      // client can mark exactly the one row that failed, instead of
+      // leaving that row's translation blank forever while an unrelated
+      // banner flashes somewhere else on screen.
+      sendJson(this.clientWs, { type: "translation_error", segmentId, message: err.message });
     }
   }
 

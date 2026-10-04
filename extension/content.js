@@ -47,6 +47,7 @@
       .cell.original.active { background: rgba(255, 107, 107, 0.22); }
       .cell.translation { background: rgba(76, 175, 80, 0.07); font-weight: 500; }
       .cell.translation.active { background: rgba(76, 175, 80, 0.22); }
+      .cell.translation.failed { background: rgba(255, 107, 107, 0.15); font-style: italic; font-weight: 400; color: #8a92a3; }
       .status { padding: 6px 12px; font-size: 11px; color: #8a92a3; min-height: 1.3em; }
     </style>
     <div class="wrap" id="wrap">
@@ -143,6 +144,14 @@
         row.translationCell.textContent = msg.text;
         row.translationCell.classList.remove("active");
         pruneOldRows();
+        scrollToBottom();
+        break;
+      }
+      case "translation_error": {
+        const row = getOrCreateRow(msg.segmentId);
+        row.translationCell.textContent = "Nie udalo sie przetlumaczyc tej linii.";
+        row.translationCell.classList.remove("active");
+        row.translationCell.classList.add("failed");
         scrollToBottom();
         break;
       }
