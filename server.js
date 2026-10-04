@@ -322,6 +322,18 @@ class TranscriptionSession {
 
   sendAudioChunk(base64Audio) {
     this.recentAmplitude = pcm16RmsAmplitude(base64Audio);
+
+    // True silence (paused video, muted tab, nothing playing) is never
+    // forwarded to the transcribe model at all. ASR models are well known
+    // to hallucinate text over pure silence — with OpenAI's own server_vad
+    // disabled (see start(), above), nothing else recognizes "this isn't
+    // speech" anymore, so this is now the only thing standing between a
+    // quiet tab and a stream of garbage transcripts. Comfortably below
+    // QUIET_AMPLITUDE (which only needs to catch a brief pause between
+    // words), so real speech — including quiet speech — still goes through.
+    const SILENCE_THRESHOLD = 150;
+    if (this.recentAmplitude < SILENCE_THRESHOLD) return;
+
     if (this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
       this.upstream.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: base64Audio })
