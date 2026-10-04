@@ -1,18 +1,39 @@
 const BACKEND_WS_URL = "ws://localhost:3000/stream";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
-let activeTabId = null;
+// MV3 service workers get killed after ~30s of inactivity and respawn on
+// the next event with a completely clean slate — a plain `let activeTabId`
+// here would silently reset to null mid-session (nothing about relaying
+// messages or driving the offscreen document counts as "activity" that
+// keeps this worker alive), and every relay after that point would be
+// dropped with the overlay just sitting on its last status forever.
+// chrome.storage.session survives worker restarts for the lifetime of the
+// browser session, which is exactly the lifetime we need here.
+async function getActiveTabId() {
+  const { activeTabId } = await chrome.storage.session.get("activeTabId");
+  return activeTabId ?? null;
+}
+
+async function setActiveTabId(tabId) {
+  if (tabId === null) {
+    await chrome.storage.session.remove("activeTabId");
+  } else {
+    await chrome.storage.session.set({ activeTabId: tabId });
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === "background" && message.type === "relay") {
     // Caption/status/error events from the offscreen document — forward to
     // the content script overlay on the tab we're actually capturing.
-    if (activeTabId !== null) {
-      chrome.tabs.sendMessage(activeTabId, { type: "caption-event", payload: message.payload }).catch(() => {
-        // Content script may not be ready yet (first event can race the
-        // injection below) or the tab was closed — safe to ignore.
-      });
-    }
+    getActiveTabId().then((activeTabId) => {
+      if (activeTabId !== null) {
+        chrome.tabs.sendMessage(activeTabId, { type: "caption-event", payload: message.payload }).catch(() => {
+          // Content script may not be ready yet (first event can race the
+          // injection below) or the tab was closed — safe to ignore.
+        });
+      }
+    });
     return;
   }
 
@@ -31,13 +52,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "popup-status") {
-    sendResponse({ activeTabId });
+    getActiveTabId().then((activeTabId) => sendResponse({ activeTabId }));
     return true;
   }
 });
 
 async function startCapture(tabId, targetLang) {
-  if (activeTabId !== null) {
+  if ((await getActiveTabId()) !== null) {
     await stopCapture();
   }
 
@@ -58,7 +79,7 @@ async function startCapture(tabId, targetLang) {
   // whatever CSS the host page itself uses.
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
 
-  activeTabId = tabId;
+  await setActiveTabId(tabId);
   chrome.tabs.sendMessage(tabId, { type: "show-overlay" }).catch(() => {});
 
   chrome.runtime.sendMessage({
@@ -72,10 +93,11 @@ async function startCapture(tabId, targetLang) {
 
 async function stopCapture() {
   chrome.runtime.sendMessage({ target: "offscreen", type: "stop-capture" });
+  const activeTabId = await getActiveTabId();
   if (activeTabId !== null) {
     chrome.tabs.sendMessage(activeTabId, { type: "hide-overlay" }).catch(() => {});
   }
-  activeTabId = null;
+  await setActiveTabId(null);
   if (await chrome.offscreen.hasDocument()) {
     await chrome.offscreen.closeDocument();
   }
@@ -90,8 +112,8 @@ async function ensureOffscreenDocument() {
   });
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === activeTabId) {
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (tabId === (await getActiveTabId())) {
     stopCapture();
   }
 });
