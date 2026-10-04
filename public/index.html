@@ -64,60 +64,54 @@
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   #status { font-size: 0.85rem; color: var(--muted); margin-top: 12px; min-height: 1.2em; }
   #status.error { color: var(--error); }
-  .reel-wrap {
+  .panels {
     width: 100%;
     max-width: 1000px;
     margin-top: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .panel {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
-  .reel-header {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    border-bottom: 1px solid var(--border);
-  }
-  .reel-header span {
+  .panel-header {
     padding: 10px 20px;
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--muted);
+    border-bottom: 1px solid var(--border);
   }
-  .reel-header span:first-child { border-right: 1px solid var(--border); }
   .reel {
     height: 240px;
     overflow-y: auto;
     scroll-behavior: smooth;
   }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+  .line {
+    padding: 12px 20px;
+    line-height: 1.5;
+    font-size: 1.05rem;
     border-bottom: 1px solid var(--border);
     transition: background-color 0.3s ease;
   }
-  .row.active { background: rgba(255, 255, 255, 0.05); }
-  .cell {
-    padding: 16px 20px;
-    line-height: 1.5;
-    font-size: 1.05rem;
-  }
-  .cell.original {
-    border-right: 1px solid var(--border);
+  .line.active { background: rgba(255, 255, 255, 0.05); }
+  #originalReel .line {
     text-decoration: underline;
     text-decoration-color: #ff6b6b70;
     text-decoration-thickness: 2px;
     text-underline-offset: 4px;
   }
-  .cell.translation {
+  #translationReel .line {
     text-decoration: underline;
     text-decoration-color: #4caf5070;
     text-decoration-thickness: 2px;
     text-underline-offset: 4px;
     font-weight: 500;
   }
-  .cell:empty::after { content: "\00a0"; }
   .hint { max-width: 1000px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
 </style>
 </head>
@@ -139,12 +133,15 @@
   </div>
   <div id="status"></div>
 
-  <div class="reel-wrap">
-    <div class="reel-header">
-      <span>Oryginal</span>
-      <span>Tlumaczenie</span>
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">Oryginal</div>
+      <div class="reel" id="originalReel"></div>
     </div>
-    <div class="reel" id="reel"></div>
+    <div class="panel">
+      <div class="panel-header">Tlumaczenie</div>
+      <div class="reel" id="translationReel"></div>
+    </div>
   </div>
 
   <p class="hint">

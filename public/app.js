@@ -1,12 +1,13 @@
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
-const reelEl = document.getElementById("reel");
+const originalReelEl = document.getElementById("originalReel");
+const translationReelEl = document.getElementById("translationReel");
 const sourceLangInput = document.getElementById("sourceLang");
 const targetLangInput = document.getElementById("targetLang");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
-const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
+const MAX_LINES_KEPT = 50; // prune old lines so a long session doesn't grow the DOM forever
 
 let ws = null;
 let audioContext = null;
@@ -14,11 +15,13 @@ let processorNode = null;
 let sourceNode = null;
 let displayStream = null;
 
-// Rows are keyed by the server's segmentId so a translation always lands in
-// the same row as its original sentence, even if two sentences are mid-
-// translation at once. The in-progress sentence (before its segmentId is
-// known) lives under the "pending" key and gets re-keyed once it finalizes.
-const rows = new Map();
+// Two independent, independently-scrolling panels. Lines are still keyed by
+// the server's segmentId (not just "append to the last line") so that two
+// sentences mid-translation at once can't interleave their text into one
+// line. The in-progress original (before its segmentId is known) lives
+// under the "pending" key and gets re-keyed once it finalizes.
+const originalLines = new Map();
+const translationLines = new Map();
 
 startBtn.addEventListener("click", start);
 stopBtn.addEventListener("click", stop);
@@ -51,8 +54,10 @@ async function start() {
 }
 
 function openSocket() {
-  rows.clear();
-  reelEl.innerHTML = "";
+  originalLines.clear();
+  translationLines.clear();
+  originalReelEl.innerHTML = "";
+  translationReelEl.innerHTML = "";
 
   const target = encodeURIComponent(targetLangInput.value.trim() || "pl");
   const source = encodeURIComponent(sourceLangInput.value.trim());
@@ -88,74 +93,71 @@ function handleServerMessage(msg) {
       setStatus(msg.message, true);
       break;
     case "transcript_delta": {
-      const row = getOrCreateRow("pending");
-      row.originalCell.textContent += msg.text;
-      row.el.classList.add("active");
-      scrollToBottom();
+      const line = getOrCreateLine(originalLines, originalReelEl, "pending");
+      line.el.textContent += msg.text;
+      line.el.classList.add("active");
+      scrollToBottom(originalReelEl);
       break;
     }
     case "transcript_final": {
-      const row = claimRow(msg.segmentId);
-      row.originalCell.textContent = msg.text;
-      scrollToBottom();
+      const line = claimLine(originalLines, originalReelEl, msg.segmentId);
+      line.el.textContent = msg.text;
+      line.el.classList.remove("active");
+      pruneOldLines(originalLines);
+      scrollToBottom(originalReelEl);
       break;
     }
     case "translation_delta": {
-      const row = getOrCreateRow(msg.segmentId);
-      row.translationCell.textContent += msg.text;
-      row.el.classList.add("active");
-      scrollToBottom();
+      const line = getOrCreateLine(translationLines, translationReelEl, msg.segmentId);
+      line.el.textContent += msg.text;
+      line.el.classList.add("active");
+      scrollToBottom(translationReelEl);
       break;
     }
     case "translation_final": {
-      const row = getOrCreateRow(msg.segmentId);
-      row.translationCell.textContent = msg.text;
-      row.el.classList.remove("active");
-      pruneOldRows();
-      scrollToBottom();
+      const line = getOrCreateLine(translationLines, translationReelEl, msg.segmentId);
+      line.el.textContent = msg.text;
+      line.el.classList.remove("active");
+      pruneOldLines(translationLines);
+      scrollToBottom(translationReelEl);
       break;
     }
   }
 }
 
-/** Returns the row for `id`, creating (and appending) it if it doesn't exist yet. */
-function getOrCreateRow(id) {
-  let row = rows.get(id);
-  if (!row) {
+/** Returns the line for `id` in the given panel, creating (and appending) it if needed. */
+function getOrCreateLine(lines, reelEl, id) {
+  let line = lines.get(id);
+  if (!line) {
     const el = document.createElement("div");
-    el.className = "row";
-    const originalCell = document.createElement("div");
-    originalCell.className = "cell original";
-    const translationCell = document.createElement("div");
-    translationCell.className = "cell translation";
-    el.append(originalCell, translationCell);
+    el.className = "line";
     reelEl.appendChild(el);
-    row = { el, originalCell, translationCell };
-    rows.set(id, row);
+    line = { el };
+    lines.set(id, line);
   }
-  return row;
+  return line;
 }
 
-/** Moves the in-progress "pending" row (if any) to its real segmentId once the server assigns one. */
-function claimRow(segmentId) {
-  const pending = rows.get("pending");
+/** Moves the in-progress "pending" original line (if any) to its real segmentId once the server assigns one. */
+function claimLine(lines, reelEl, segmentId) {
+  const pending = lines.get("pending");
   if (pending) {
-    rows.delete("pending");
-    rows.set(segmentId, pending);
+    lines.delete("pending");
+    lines.set(segmentId, pending);
     return pending;
   }
-  return getOrCreateRow(segmentId);
+  return getOrCreateLine(lines, reelEl, segmentId);
 }
 
-function pruneOldRows() {
-  while (rows.size > MAX_ROWS_KEPT) {
-    const oldestId = rows.keys().next().value;
-    rows.get(oldestId).el.remove();
-    rows.delete(oldestId);
+function pruneOldLines(lines) {
+  while (lines.size > MAX_LINES_KEPT) {
+    const oldestId = lines.keys().next().value;
+    lines.get(oldestId).el.remove();
+    lines.delete(oldestId);
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(reelEl) {
   reelEl.scrollTop = reelEl.scrollHeight;
 }
 
