@@ -12,6 +12,18 @@ const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
 const PORT = process.env.PORT || 3000;
 
+// TEMPORARY, for the [USAGE] cost measurement only — public pricing as of
+// this writing (not re-verified against the official OpenAI cennik from
+// this environment, since openai.com/platform.openai.com are blocked here).
+// Update these two $/1M rates if OpenAI changes pricing; the session summary
+// below computes an exact dollar figure from them + the real token counts.
+const PRICING_USD_PER_1M = {
+  asrAudioIn: 6.0, // gpt-4o-transcribe, audio input tokens
+  asrTextOut: 10.0, // gpt-4o-transcribe, transcript output tokens
+  translateIn: 0.15, // gpt-4o-mini, input tokens
+  translateOut: 0.6, // gpt-4o-mini, output tokens
+};
+
 const app = express();
 app.use(express.static("public"));
 
@@ -107,6 +119,7 @@ class TranscriptionSession {
     this.startedAt = Date.now();
     this.sentAudioMs = 0;
     this.translationRequests = 0;
+    this.usage = { asrAudioInputTokens: 0, asrOutputTokens: 0, translationInputTokens: 0, translationOutputTokens: 0 };
   }
 
   start() {
@@ -254,6 +267,8 @@ class TranscriptionSession {
     // cost audit. Grep server logs for "[USAGE]" after a test run.
     if (event.usage) {
       console.log(`[USAGE][${event.type}]`, JSON.stringify(event.usage));
+      this.usage.asrAudioInputTokens += event.usage.input_token_details?.audio_tokens || 0;
+      this.usage.asrOutputTokens += event.usage.output_tokens || 0;
     }
 
     switch (event.type) {
@@ -433,6 +448,8 @@ class TranscriptionSession {
           }
           if (parsed.usage) {
             console.log(`[USAGE][translation]`, JSON.stringify(parsed.usage));
+            this.usage.translationInputTokens += parsed.usage.prompt_tokens || 0;
+            this.usage.translationOutputTokens += parsed.usage.completion_tokens || 0;
           }
         } catch {
           // pomijamy niepelne/nieparsowalne fragmenty SSE
@@ -477,10 +494,19 @@ class TranscriptionSession {
     // logged above, this is everything needed to compute a real $/minute
     // figure from one test session.
     const sessionSec = (Date.now() - this.startedAt) / 1000;
+    const costUSD =
+      (this.usage.asrAudioInputTokens / 1e6) * PRICING_USD_PER_1M.asrAudioIn +
+      (this.usage.asrOutputTokens / 1e6) * PRICING_USD_PER_1M.asrTextOut +
+      (this.usage.translationInputTokens / 1e6) * PRICING_USD_PER_1M.translateIn +
+      (this.usage.translationOutputTokens / 1e6) * PRICING_USD_PER_1M.translateOut;
+    const costPerMinuteUSD = sessionSec > 0 ? costUSD / (sessionSec / 60) : 0;
     console.log(
       `[USAGE SUMMARY] session=${sessionSec.toFixed(1)}s audioSentToASR=${(this.sentAudioMs / 1000).toFixed(
         1
-      )}s translationRequests=${this.translationRequests} segments=${this.segmentCounter}`
+      )}s translationRequests=${this.translationRequests} segments=${this.segmentCounter} ` +
+        `tokens(asrAudioIn=${this.usage.asrAudioInputTokens},asrOut=${this.usage.asrOutputTokens},` +
+        `translateIn=${this.usage.translationInputTokens},translateOut=${this.usage.translationOutputTokens}) ` +
+        `estimatedCostUSD=${costUSD.toFixed(5)} costPerMinuteUSD=${costPerMinuteUSD.toFixed(5)}`
     );
   }
 }
