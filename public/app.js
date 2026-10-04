@@ -44,6 +44,9 @@ sourceBtns.forEach((btn) => {
   });
 });
 
+let playerIframe = null;
+let playerPlatform = null;
+
 function loadSource() {
   const url = sourceUrlInput.value.trim();
   if (!url || !selectedPlatform) return;
@@ -61,6 +64,14 @@ function loadSource() {
   iframe.allowFullscreen = true;
   playerWrap.appendChild(iframe);
   playerWrap.className = "player-wrap visible " + (selectedPlatform === "youtube" ? "ratio-video" : "ratio-audio");
+  playerIframe = iframe;
+  playerPlatform = selectedPlatform;
+
+  // Free up vertical space now that the player is up — the picker/input row,
+  // title subtitle, and later the hint text no longer need to be on screen.
+  document.querySelector(".source-bar").style.display = "none";
+  sourceInputRow.style.display = "none";
+  document.body.classList.add("compact");
 
   // Triggered from the same click as "Wczytaj", so the browser still treats
   // this as a direct response to a user gesture and allows getDisplayMedia
@@ -72,12 +83,25 @@ function loadSource() {
 
 function buildYouTubeEmbed(url) {
   const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  return match ? `https://www.youtube.com/embed/${match[1]}?autoplay=1` : null;
+  // No autoplay here on purpose: the video only starts once the capture
+  // pipeline is actually ready (see the "ready" message below) — otherwise
+  // it autoplays instantly while audio capture is still being set up, and
+  // the first few seconds of speech are never heard at all.
+  return match ? `https://www.youtube.com/embed/${match[1]}?enablejsapi=1` : null;
 }
 
 function buildSpotifyEmbed(url) {
   const match = url.match(/open\.spotify\.com\/(?:intl-\w+\/)?(episode|show|track)\/([a-zA-Z0-9]+)/);
   return match ? `https://open.spotify.com/embed/${match[1]}/${match[2]}` : null;
+}
+
+/** Starts playback once the capture pipeline is confirmed ready, so no audio is missed. */
+function playEmbeddedSource() {
+  if (playerPlatform === "youtube" && playerIframe) {
+    playerIframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+  }
+  // Spotify's embed needs its own SDK to control playback remotely, so for
+  // now it keeps its default behavior (user presses play in the widget).
 }
 
 async function start() {
@@ -146,6 +170,9 @@ function handleServerMessage(msg) {
   switch (msg.type) {
     case "status":
       setStatus(msg.message);
+      break;
+    case "ready":
+      playEmbeddedSource();
       break;
     case "error":
       setStatus(msg.message, true);

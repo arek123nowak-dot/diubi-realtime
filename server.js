@@ -71,6 +71,11 @@ class TranscriptionSession {
     this.upstream = null;
     this.closed = false;
     this.segmentCounter = 0;
+    this.upstreamReady = false;
+    // Audio the client sends before the OpenAI connection finishes its
+    // handshake used to be silently dropped, which lost the first couple
+    // seconds of a video that starts autoplaying the instant it's loaded.
+    this.pendingAudio = [];
   }
 
   start() {
@@ -112,7 +117,16 @@ class TranscriptionSession {
           },
         })
       );
+
+      this.upstreamReady = true;
+      for (const audio of this.pendingAudio) {
+        upstream.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+      }
+      console.log(`[openai] flushed ${this.pendingAudio.length} buffered audio chunk(s)`);
+      this.pendingAudio = [];
+
       sendJson(this.clientWs, { type: "status", message: "polaczono z ASR" });
+      sendJson(this.clientWs, { type: "ready" });
     });
 
     upstream.on("message", (raw) => {
@@ -170,10 +184,14 @@ class TranscriptionSession {
   }
 
   sendAudioChunk(base64Audio) {
-    if (this.upstream?.readyState === WebSocket.OPEN) {
+    if (this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
       this.upstream.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: base64Audio })
       );
+    } else if (!this.closed && this.pendingAudio.length < 300) {
+      // Capped so a stuck/never-opening upstream connection can't grow this
+      // unbounded; 300 chunks is roughly a minute of buffered audio.
+      this.pendingAudio.push(base64Audio);
     }
   }
 

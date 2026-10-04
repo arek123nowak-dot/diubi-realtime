@@ -25,10 +25,14 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 24px 16px 48px;
+    padding: 16px 16px 24px;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 4px; }
-  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 0.9rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; transition: font-size 0.2s ease; }
+  .subtitle { color: var(--muted); margin: 0 0 16px; font-size: 0.9rem; transition: all 0.2s ease; }
+  /* Added once a source is loaded, to reclaim vertical space the intro
+     text and full source picker no longer need to occupy. */
+  body.compact h1 { font-size: 1.05rem; margin-bottom: 2px; }
+  body.compact .subtitle { max-height: 0; margin: 0; opacity: 0; overflow: hidden; }
   .source-bar {
     display: flex;
     flex-wrap: wrap;
@@ -76,15 +80,18 @@
     display: none;
     width: 100%;
     max-width: 900px;
-    margin-top: 16px;
+    margin-top: 10px;
     border-radius: 12px;
     overflow: hidden;
     background: #000;
   }
   .player-wrap.visible { display: block; }
-  .player-wrap.ratio-video { aspect-ratio: 16 / 9; }
+  /* Capped by viewport height (not a fixed aspect-ratio box) so the player
+     never pushes the transcript below the fold — YouTube/Spotify letterbox
+     their own content inside whatever box they're given. */
+  .player-wrap.ratio-video { height: min(34vh, 380px); }
   .player-wrap iframe { width: 100%; height: 100%; border: 0; display: block; }
-  .player-wrap.ratio-audio iframe { height: 232px; }
+  .player-wrap.ratio-audio iframe { height: 152px; }
   .controls {
     display: flex;
     flex-wrap: wrap;
@@ -93,9 +100,10 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 16px;
+    padding: 10px 16px;
     width: 100%;
     max-width: 900px;
+    margin-top: 10px;
   }
   label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
   input {
@@ -118,12 +126,12 @@
   #startBtn { background: var(--accent); color: white; }
   #stopBtn { background: #2a2f3a; color: var(--text); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  #status { font-size: 0.85rem; color: var(--muted); margin-top: 12px; min-height: 1.2em; }
+  #status { font-size: 0.85rem; color: var(--muted); margin-top: 6px; min-height: 1.2em; }
   #status.error { color: var(--error); }
   .reel-wrap {
     width: 100%;
     max-width: 1000px;
-    margin-top: 24px;
+    margin-top: 10px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -145,7 +153,7 @@
   /* One shared scrollbar for both columns, so they always move together
      and a translation never drifts out of line with its original. */
   .reel {
-    height: 240px;
+    height: min(34vh, 300px);
     overflow-y: auto;
     scroll-behavior: smooth;
   }
@@ -171,7 +179,17 @@
   }
   .cell.translation.active { background: rgba(76, 175, 80, 0.22); }
   .cell:empty::after { content: "\00a0"; }
-  .hint { max-width: 1000px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
+  .hint {
+    max-width: 1000px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-top: 10px;
+    line-height: 1.5;
+    transition: all 0.2s ease;
+  }
+  /* The "pick This tab" instructions only matter during the Start click —
+     once connected, keep that space for the transcript instead. */
+  body.compact .hint { max-height: 0; margin: 0; opacity: 0; overflow: hidden; }
 </style>
 </head>
 <body>
