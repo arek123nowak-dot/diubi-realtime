@@ -91,6 +91,12 @@ class TranscriptionSession {
     this.hasUncommittedAudio = false;
     this.forceCommitTimer = null;
     this.idleFlushTimer = null;
+    // RMS amplitude of the most recent audio chunk, used to wait for a
+    // brief natural dip in volume (a micro-pause between words/syllables)
+    // before forcing a commit, instead of cutting at a blind fixed instant
+    // that's just as likely to land mid-word.
+    this.recentAmplitude = 0;
+    this.sinceLastCommitAt = Date.now();
   }
 
   start() {
@@ -152,16 +158,32 @@ class TranscriptionSession {
       // Natural VAD silence can be 15-20+ seconds away during fast,
       // continuous speech (confirmed in testing) — nothing transcribes at
       // all until then, since VAD is what triggers OpenAI to even start
-      // processing a chunk. Forcing a commit every 5s of uninterrupted
-      // speech means transcription (and translation) keeps pace even when
-      // the speaker never pauses; the cross-chunk sentence buffer below is
-      // what stops that from cutting a sentence in half.
+      // processing a chunk. Forcing a commit once speech has run past 5s
+      // keeps transcription (and translation) roughly in pace even when the
+      // speaker never pauses; the cross-chunk sentence buffer is what stops
+      // that from translating a sentence broken in half.
+      //
+      // Checked every 200ms rather than fired blindly every 5s: cutting the
+      // instant the 5s mark is hit landed mid-word as often as not. Instead
+      // this waits (up to 3 more seconds) for recentAmplitude to dip —  a
+      // micro-pause between words/syllables, shorter than what VAD's own
+      // silence_duration_ms requires but usually enough to avoid slicing a
+      // word in half. Past 8s total it commits anyway rather than hold out
+      // for a dip that may not come during truly continuous speech.
+      const FORCE_COMMIT_AFTER_MS = 5000;
+      const FORCE_COMMIT_HARD_CAP_MS = 8000;
+      const QUIET_AMPLITUDE = 500; // out of 32767 (Int16 full scale)
+
       this.forceCommitTimer = setInterval(() => {
-        if (this.hasUncommittedAudio && this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
-          this.upstream.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-          this.hasUncommittedAudio = false;
-        }
-      }, 5000);
+        if (!this.hasUncommittedAudio || !this.upstreamReady || this.upstream?.readyState !== WebSocket.OPEN) return;
+        const elapsed = Date.now() - this.sinceLastCommitAt;
+        if (elapsed < FORCE_COMMIT_AFTER_MS) return;
+        if (elapsed < FORCE_COMMIT_HARD_CAP_MS && this.recentAmplitude >= QUIET_AMPLITUDE) return;
+
+        this.upstream.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        this.hasUncommittedAudio = false;
+        this.sinceLastCommitAt = Date.now();
+      }, 200);
 
       // Safety net: if the buffer has a dangling fragment (last chunk
       // trailed off without sentence-ending punctuation) and nothing new
@@ -226,9 +248,19 @@ class TranscriptionSession {
 
       case "input_audio_buffer.committed":
         this.hasUncommittedAudio = false;
+        this.sinceLastCommitAt = Date.now();
         break;
 
       case "error":
+        if (event.error?.code === "input_audio_buffer_commit_empty") {
+          // Benign race: our forced-commit timer and OpenAI's own VAD both
+          // decided to commit around the same moment, and VAD's commit won
+          // — the buffer genuinely has nothing left. Not a real problem,
+          // just means our tracking thought there was still audio pending;
+          // clear it so the timer doesn't immediately retry the same thing.
+          this.hasUncommittedAudio = false;
+          break;
+        }
         console.error("[openai] error event:", JSON.stringify(event));
         sendJson(this.clientWs, {
           type: "error",
@@ -280,6 +312,7 @@ class TranscriptionSession {
   }
 
   sendAudioChunk(base64Audio) {
+    this.recentAmplitude = pcm16RmsAmplitude(base64Audio);
     if (this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
       this.upstream.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: base64Audio })
@@ -352,6 +385,20 @@ class TranscriptionSession {
       this.upstream.close();
     }
   }
+}
+
+/** RMS amplitude of a base64-encoded PCM16 chunk, used to find micro-pauses between words. */
+function pcm16RmsAmplitude(base64Audio) {
+  const buffer = Buffer.from(base64Audio, "base64");
+  const samples = buffer.length / 2;
+  if (samples === 0) return 0;
+
+  let sumSquares = 0;
+  for (let i = 0; i < samples; i++) {
+    const sample = buffer.readInt16LE(i * 2);
+    sumSquares += sample * sample;
+  }
+  return Math.sqrt(sumSquares / samples);
 }
 
 /**
