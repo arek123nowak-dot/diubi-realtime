@@ -44,50 +44,64 @@ sourceBtns.forEach((btn) => {
   });
 });
 
-let playerIframe = null;
+let playerIframe = null; // Spotify's plain iframe
 let playerPlatform = null;
+let ytPlayer = null; // YT.Player instance, once the YouTube API has loaded
+let ytApiPromise = null;
+let captureReady = false; // true once the server confirms OpenAI is connected
 
 function loadSource() {
   const url = sourceUrlInput.value.trim();
   if (!url || !selectedPlatform) return;
 
-  const embedSrc = selectedPlatform === "youtube" ? buildYouTubeEmbed(url) : buildSpotifyEmbed(url);
-  if (!embedSrc) {
-    setStatus(`Nie rozpoznaje tego linku jako ${selectedPlatform === "youtube" ? "YouTube" : "Spotify"}.`, true);
-    return;
+  collapseSourcePicker();
+
+  if (selectedPlatform === "youtube") {
+    const videoId = extractYouTubeId(url);
+    if (!videoId) {
+      setStatus("Nie rozpoznaje tego linku jako YouTube.", true);
+      return;
+    }
+    playerWrap.innerHTML = '<div id="ytTarget"></div>';
+    playerWrap.className = "player-wrap visible ratio-video";
+    playerPlatform = "youtube";
+    // Fire-and-forget: loading the YouTube API script is async, but it must
+    // NOT be awaited before calling start() below, or the click that
+    // triggered this handler stops counting as a "user gesture" by the time
+    // we get there and getDisplayMedia gets silently rejected.
+    setupYouTubePlayer(videoId, url);
+  } else {
+    const embedSrc = buildSpotifyEmbed(url);
+    if (!embedSrc) {
+      setStatus("Nie rozpoznaje tego linku jako Spotify.", true);
+      return;
+    }
+    playerWrap.innerHTML = "";
+    const iframe = document.createElement("iframe");
+    iframe.src = embedSrc;
+    iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+    iframe.allowFullscreen = true;
+    playerWrap.appendChild(iframe);
+    playerWrap.className = "player-wrap visible ratio-audio";
+    playerIframe = iframe;
+    playerPlatform = "spotify";
   }
 
-  playerWrap.innerHTML = "";
-  const iframe = document.createElement("iframe");
-  iframe.src = embedSrc;
-  iframe.allow = "autoplay; encrypted-media; picture-in-picture";
-  iframe.allowFullscreen = true;
-  playerWrap.appendChild(iframe);
-  playerWrap.className = "player-wrap visible " + (selectedPlatform === "youtube" ? "ratio-video" : "ratio-audio");
-  playerIframe = iframe;
-  playerPlatform = selectedPlatform;
+  // Still synchronous within this click handler (see note above).
+  start();
+}
 
+function collapseSourcePicker() {
   // Free up vertical space now that the player is up — the picker/input row,
   // title subtitle, and later the hint text no longer need to be on screen.
   document.querySelector(".source-bar").style.display = "none";
   sourceInputRow.style.display = "none";
   document.body.classList.add("compact");
-
-  // Triggered from the same click as "Wczytaj", so the browser still treats
-  // this as a direct response to a user gesture and allows getDisplayMedia
-  // without a second button press. The native tab-share dialog that follows
-  // is the browser's own permission prompt, not a question from this app —
-  // pick "This tab" so it captures the embed that was just loaded above.
-  start();
 }
 
-function buildYouTubeEmbed(url) {
+function extractYouTubeId(url) {
   const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  // No autoplay here on purpose: the video only starts once the capture
-  // pipeline is actually ready (see the "ready" message below) — otherwise
-  // it autoplays instantly while audio capture is still being set up, and
-  // the first few seconds of speech are never heard at all.
-  return match ? `https://www.youtube.com/embed/${match[1]}?enablejsapi=1` : null;
+  return match ? match[1] : null;
 }
 
 function buildSpotifyEmbed(url) {
@@ -95,16 +109,84 @@ function buildSpotifyEmbed(url) {
   return match ? `https://open.spotify.com/embed/${match[1]}/${match[2]}` : null;
 }
 
+function loadYouTubeApi() {
+  if (window.YT && window.YT.Player) return Promise.resolve();
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise((resolve) => {
+    const previous = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (previous) previous();
+      resolve();
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(script);
+  });
+  return ytApiPromise;
+}
+
+async function setupYouTubePlayer(videoId, originalUrl) {
+  await loadYouTubeApi();
+  ytPlayer = new YT.Player("ytTarget", {
+    videoId,
+    playerVars: { autoplay: 0, playsinline: 1 },
+    events: {
+      // If capture was already confirmed ready before the player finished
+      // loading, start it now instead of waiting on a "ready" message that
+      // already came and went.
+      onReady: () => {
+        if (captureReady) ytPlayer.playVideo();
+      },
+      onError: (e) => handleYouTubeError(e.data, originalUrl),
+    },
+  });
+}
+
+/**
+ * Error 101/150 both mean "the owner disabled embedding for this video" —
+ * the one failure mode we can actually recover from automatically, by
+ * sending the user to a real YouTube tab and capturing that instead. No
+ * explaining required: one button, one click, done.
+ */
+function handleYouTubeError(code, originalUrl) {
+  if (code === 101 || code === 150) {
+    showEmbedBlockedFallback(originalUrl);
+  } else if (code === 100) {
+    setStatus("Ten film nie istnieje albo jest prywatny.", true);
+  } else {
+    setStatus("Nie udalo sie zaladowac filmu z YouTube.", true);
+  }
+}
+
+function showEmbedBlockedFallback(originalUrl) {
+  // Whatever capture already started was listening to this (silent) tab —
+  // throw it away, the fallback button below starts a correct one.
+  stop();
+
+  playerWrap.innerHTML = `
+    <div class="embed-blocked">
+      <p>Ten film nie pozwala na odtwarzanie tutaj — to ograniczenie ustawione przez autora filmu.</p>
+      <button type="button" id="embedFallbackBtn">Otworz w nowej karcie i kontynuuj</button>
+    </div>`;
+  playerWrap.className = "player-wrap visible ratio-fallback";
+  document.getElementById("embedFallbackBtn").addEventListener("click", () => {
+    window.open(originalUrl, "_blank");
+    start();
+  });
+}
+
 /** Starts playback once the capture pipeline is confirmed ready, so no audio is missed. */
 function playEmbeddedSource() {
-  if (playerPlatform === "youtube" && playerIframe) {
-    playerIframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+  captureReady = true;
+  if (playerPlatform === "youtube" && ytPlayer && ytPlayer.playVideo) {
+    ytPlayer.playVideo();
   }
   // Spotify's embed needs its own SDK to control playback remotely, so for
   // now it keeps its default behavior (user presses play in the widget).
 }
 
 async function start() {
+  captureReady = false;
   startBtn.disabled = true;
   setStatus('To okno przegladarki prosi o zgode, nie nasza apka — wybierz "Ta karta" i zaznacz dzwiek.');
 
