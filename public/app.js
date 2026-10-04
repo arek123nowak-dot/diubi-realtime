@@ -193,6 +193,19 @@ async function start(options = {}) {
   const { preferCurrentTab = true } = options;
   captureReady = false;
   startBtn.disabled = true;
+
+  // getDisplayMedia's own permission is still live (Stop no longer releases
+  // it, see stop() below) — reuse it instead of re-prompting. Chrome has no
+  // "remember this" option for tab/screen capture (unlike mic/camera) by
+  // design, so the ONLY way to avoid re-prompting on every Start is to never
+  // let the grant lapse in the first place.
+  const liveTrack = displayStream?.getAudioTracks()[0];
+  if (liveTrack && liveTrack.readyState === "live") {
+    setStatus("Wznawiam nasluch (bez ponownego okna wyboru karty)...");
+    openSocket();
+    return;
+  }
+
   setStatus(
     preferCurrentTab
       ? 'To okno przegladarki prosi o zgode, nie nasza apka — wybierz "Ta karta" i zaznacz dzwiek.'
@@ -223,6 +236,13 @@ async function start(options = {}) {
     return;
   }
   displayStream.getVideoTracks().forEach((t) => t.stop());
+  // If the user revokes sharing from Chrome's own UI (the "Stop sharing"
+  // bar) rather than DIUBI's Stop button, the grant is really gone — forget
+  // the stream so the next Start correctly re-prompts instead of trying to
+  // reuse a dead track.
+  audioTracks[0].addEventListener("ended", () => {
+    if (displayStream && displayStream.getAudioTracks()[0] === audioTracks[0]) displayStream = null;
+  });
 
   openSocket();
 }
@@ -404,13 +424,19 @@ function stop() {
     ws.send(JSON.stringify({ type: "stop" }));
     ws.close();
   }
-  stopAllTracks();
+  // Deliberately NOT stopAllTracks() here — tearing down the capture would
+  // force a fresh getDisplayMedia() picker on the next Start (Chrome never
+  // lets a page "remember" a tab/screen-capture grant the way it can for
+  // mic/camera). Only disconnecting the audio processing graph keeps the
+  // grant alive so Start can resume instantly. Chrome's own "sharing this
+  // tab" indicator stays visible while stopped as a result — expected and
+  // correct, same as any other screen-share tool while paused, not stopped.
   if (processorNode) processorNode.disconnect();
   if (sourceNode) sourceNode.disconnect();
   if (audioContext) audioContext.close();
   startBtn.disabled = false;
   stopBtn.disabled = true;
-  setStatus("Zatrzymano.");
+  setStatus("Zatrzymano. Kliknij Start, by wznowic bez ponownego wyboru karty.");
 }
 
 function stopAllTracks() {
