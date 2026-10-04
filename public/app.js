@@ -8,6 +8,7 @@ const sourceInputRow = document.getElementById("sourceInputRow");
 const sourceUrlInput = document.getElementById("sourceUrlInput");
 const loadSourceBtn = document.getElementById("loadSourceBtn");
 const playerWrap = document.getElementById("playerWrap");
+const notebookBtn = document.getElementById("notebookBtn");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -422,4 +423,242 @@ function stopAllTracks() {
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
   statusEl.classList.toggle("error", isError);
+}
+
+// ---------------------------------------------------------------------------
+// Word/phrase lookup: select text in the original-language column -> a
+// floating "Wyjasnij" button appears -> opens a card with the phrase's
+// meaning IN THAT CONTEXT (not a generic dictionary definition), an example,
+// and pronunciation, with a button to save it into the user's notebook.
+// This is the first slice of turning DIUBI from "a translator" into
+// something that helps you actually learn from what you listened to.
+// ---------------------------------------------------------------------------
+
+function getUserId() {
+  let id = localStorage.getItem("diubi_user_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("diubi_user_id", id);
+  }
+  return id;
+}
+
+function currentSourceMeta() {
+  return {
+    sourceLabel: selectedPlatform === "youtube" ? "YouTube" : selectedPlatform === "spotify" ? "Spotify" : "",
+    sourceUrl: sourceUrlInput.value.trim(),
+  };
+}
+
+let explainTrigger = null;
+
+document.addEventListener("mouseup", (e) => {
+  // Ignore mouseup on the trigger button itself (its own click handler
+  // below needs the selection to still be live when it fires).
+  if (explainTrigger && explainTrigger.contains(e.target)) return;
+  removeExplainTrigger();
+
+  const selection = window.getSelection();
+  const text = selection.toString().trim();
+  if (!text || selection.rangeCount === 0) return;
+
+  const anchorEl = selection.anchorNode?.nodeType === Node.TEXT_NODE ? selection.anchorNode.parentElement : selection.anchorNode;
+  const cell = anchorEl?.closest?.(".cell.original");
+  if (!cell) return;
+
+  showExplainTrigger(text, cell.textContent, selection.getRangeAt(0));
+});
+
+function showExplainTrigger(phrase, contextSentence, range) {
+  const rect = range.getBoundingClientRect();
+  const btn = document.createElement("button");
+  btn.className = "explain-trigger";
+  btn.textContent = "Wyjasnij ⭐";
+  btn.style.left = `${rect.left + rect.width / 2}px`;
+  btn.style.top = `${Math.max(rect.top - 8, 36)}px`;
+  btn.addEventListener("click", () => {
+    openExplainCard(phrase, contextSentence);
+    removeExplainTrigger();
+  });
+  document.body.appendChild(btn);
+  explainTrigger = btn;
+}
+
+function removeExplainTrigger() {
+  if (explainTrigger) {
+    explainTrigger.remove();
+    explainTrigger = null;
+  }
+}
+
+function openModal(innerHtml) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card">${innerHtml}</div>`;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+async function openExplainCard(phrase, contextSentence) {
+  const overlay = openModal(`
+    <h2>${escapeHtml(phrase)}</h2>
+    <p class="phrase-src">${escapeHtml(contextSentence)}</p>
+    <p class="loading">Szukam wyjasnienia...</p>
+  `);
+
+  let data;
+  try {
+    const res = await fetch("/api/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phrase,
+        contextSentence,
+        targetLang: targetLangInput.value.trim() || "pl",
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `HTTP ${res.status}`);
+    data = await res.json();
+  } catch (err) {
+    overlay.querySelector(".modal-card").innerHTML = `
+      <h2>${escapeHtml(phrase)}</h2>
+      <p class="error-text">Nie udalo sie pobrac wyjasnienia: ${escapeHtml(err.message)}</p>
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `;
+    overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  const card = overlay.querySelector(".modal-card");
+  card.innerHTML = `
+    <h2>${escapeHtml(phrase)}</h2>
+    <p class="phrase-src">${escapeHtml(contextSentence)}</p>
+    <div class="field-label">Tlumaczenie</div>
+    <div class="field-value">${escapeHtml(data.translation)}</div>
+    ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
+    ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
+    ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
+    <div class="modal-actions">
+      <button class="btn-remember">⭐ Zapamietaj</button>
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+  const rememberBtn = card.querySelector(".btn-remember");
+  rememberBtn.addEventListener("click", async () => {
+    rememberBtn.disabled = true;
+    rememberBtn.textContent = "Zapisywanie...";
+    try {
+      await saveToNotebook(phrase, contextSentence, data);
+      rememberBtn.textContent = "⭐ Zapisano";
+    } catch {
+      rememberBtn.disabled = false;
+      rememberBtn.textContent = "⭐ Zapamietaj (sprobuj znowu)";
+    }
+  });
+}
+
+async function saveToNotebook(phrase, contextSentence, explainData) {
+  const { sourceLabel, sourceUrl } = currentSourceMeta();
+  const res = await fetch("/api/phrases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: getUserId(),
+      phrase,
+      translation: explainData.translation,
+      targetLang: targetLangInput.value.trim() || "pl",
+      contextSentence,
+      meaning: explainData.meaning,
+      example: explainData.example,
+      pronunciation: explainData.pronunciation,
+      sourceLabel,
+      sourceUrl,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Moj pamietnik: everything saved via "Zapamietaj", newest first.
+// ---------------------------------------------------------------------------
+
+notebookBtn.addEventListener("click", openNotebook);
+
+async function openNotebook() {
+  const overlay = openModal(`<h2>📖 Moj pamietnik</h2><p class="loading">Wczytuje...</p>`);
+  const card = overlay.querySelector(".modal-card");
+
+  let phrases;
+  try {
+    const res = await fetch(`/api/phrases?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    phrases = await res.json();
+  } catch (err) {
+    card.innerHTML = `<h2>📖 Moj pamietnik</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  renderNotebook(card, phrases);
+}
+
+function renderNotebook(card, phrases) {
+  if (phrases.length === 0) {
+    card.innerHTML = `
+      <h2>📖 Moj pamietnik</h2>
+      <p class="notebook-empty">Jeszcze nic tu nie masz. Zaznacz slowo lub fraze w transkrypcji i kliknij ⭐ Zapamietaj.</p>
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `;
+    card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+    return;
+  }
+
+  const itemsHtml = phrases
+    .map(
+      (p) => `
+      <div class="notebook-item" data-id="${p.id}">
+        <button class="np-delete" title="Usun">✕</button>
+        <div class="np-phrase">${escapeHtml(p.phrase)}</div>
+        <div class="np-translation">${escapeHtml(p.translation)}</div>
+        ${p.contextSentence ? `<div class="np-context">"${escapeHtml(p.contextSentence)}"</div>` : ""}
+        <div class="np-meta">${[p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
+      </div>`
+    )
+    .join("");
+
+  card.innerHTML = `
+    <h2>📖 Moj pamietnik</h2>
+    <div class="notebook-list">${itemsHtml}</div>
+    <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelectorAll(".np-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const item = btn.closest(".notebook-item");
+      const id = item.dataset.id;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/phrases/${id}?userId=${encodeURIComponent(getUserId())}`, { method: "DELETE" });
+        if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+        item.remove();
+      } catch {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function formatDate(ms) {
+  if (!ms) return "";
+  return new Date(ms).toLocaleDateString("pl-PL", { day: "numeric", month: "short" });
 }

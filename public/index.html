@@ -213,6 +213,115 @@
   /* The "pick This tab" instructions only matter during the Start click —
      once connected, keep that space for the transcript instead. */
   body.compact .hint { max-height: 0; margin: 0; opacity: 0; overflow: hidden; }
+
+  #notebookBtn { background: #2a2f3a; color: var(--text); }
+
+  /* Floating "Wyjasnij" button that appears next to a text selection in the
+     original-language column — appended straight to <body> (fixed
+     positioning next to a Selection's bounding rect, not tied to any one
+     row), removed again as soon as the explanation card opens or the
+     selection is dismissed. */
+  .explain-trigger {
+    position: fixed;
+    transform: translate(-50%, -100%);
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    z-index: 500;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 600;
+    padding: 16px;
+  }
+  .modal-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+    max-width: 440px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-card h2 {
+    font-size: 1.1rem;
+    margin: 0 0 4px;
+  }
+  .modal-card .phrase-src {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin: 0 0 14px;
+    font-style: italic;
+  }
+  .modal-card .field-label {
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 14px 0 3px;
+  }
+  .modal-card .field-value { font-size: 0.98rem; line-height: 1.45; }
+  .modal-card .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .modal-card .modal-actions button {
+    flex: 1;
+    padding: 10px 14px;
+  }
+  .btn-remember { background: var(--accent); color: white; }
+  .btn-remember[disabled] { background: #2a2f3a; color: var(--muted); cursor: default; }
+  .btn-close { background: #2a2f3a; color: var(--text); }
+  .modal-card .loading,
+  .modal-card .error-text { color: var(--muted); font-size: 0.9rem; }
+  .modal-card .error-text { color: var(--error); }
+
+  .notebook-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .notebook-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    position: relative;
+  }
+  .notebook-item .np-phrase { font-weight: 700; font-size: 1rem; }
+  .notebook-item .np-translation { color: var(--accent); margin-top: 2px; }
+  .notebook-item .np-context {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 6px;
+    font-style: italic;
+  }
+  .notebook-item .np-meta {
+    color: var(--muted);
+    font-size: 0.72rem;
+    margin-top: 8px;
+  }
+  .notebook-item .np-delete {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 1rem;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .notebook-empty { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 20px 0; }
 </style>
 </head>
 <body>
@@ -261,6 +370,7 @@
     </div>
     <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
+    <button id="notebookBtn">📖 Mój pamiętnik</button>
   </div>
   <div id="status"></div>
 
@@ -276,6 +386,7 @@
     Zrodlowy jezyk wykrywany jest automatycznie — niezaleznie czy to hiszpanski, niemiecki czy angielski, wystarczy
     ze podasz jezyk docelowy powyzej. Klikajac "Start" wybierz w oknie przegladarki <strong>te karte</strong> (zeby
     zlapac dzwiek z osadzonego odtwarzacza powyzej) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio".
+    Zaznacz dowolne slowo lub fraze w lewej kolumnie (oryginal), aby zobaczyc jej wyjasnienie i zapisac do pamietnika.
   </p>
 
   <script src="app.js"></script>

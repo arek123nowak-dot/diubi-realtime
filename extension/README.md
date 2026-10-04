@@ -38,6 +38,12 @@ npm start
    dostep do dzwieku aktywnej karty (to glowna roznica wzgledem wersji
    webowej), dzwiek strony leci dalej normalnie (nie wycisza sie)
 6. Klikajac X na okienku albo **Stop** w popupie — zatrzymujesz nasluch
+7. Zaznacz dowolne slowo/fraze w lewej (oryginalnej) kolumnie napisow —
+   pojawi sie przycisk **Wyjasnij**, a po kliknieciu karta z tlumaczeniem,
+   znaczeniem W TYM KONKRETNYM zdaniu, przykladem i wymowa. Przycisk
+   **⭐ Zapamietaj** zapisuje fraze (razem z kontekstowym zdaniem, tytulem
+   strony i data) do **Moj pamietnik** — dostepnego przez ikonke 📖 w
+   naglowku okienka.
 
 ## Znane ograniczenia tego prototypu
 

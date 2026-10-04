@@ -1,8 +1,10 @@
 require("dotenv").config();
 
+const crypto = require("node:crypto");
 const express = require("express");
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
+const { listPhrases, addPhrase, deletePhrase } = require("./store");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || "pl";
@@ -26,6 +28,146 @@ const PRICING_USD_PER_1M = {
 
 const app = express();
 app.use(express.static("public"));
+app.use(express.json());
+
+// The Chrome extension's content script calls these endpoints from whatever
+// page it's injected into (YouTube, Spotify, ...) — a different origin than
+// this backend, so it needs CORS even though the web app itself (same
+// origin) doesn't. Scoped to /api/* only; the WebSocket stream and static
+// files don't go through this.
+app.use("/api", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+app.post("/api/explain", async (req, res) => {
+  const { phrase, contextSentence, sourceLang, targetLang } = req.body || {};
+  if (!phrase || typeof phrase !== "string" || !phrase.trim()) {
+    return res.status(400).json({ error: "Brak frazy do wyjasnienia." });
+  }
+  try {
+    const explanation = await explainPhrase(
+      phrase.trim(),
+      contextSentence || "",
+      sourceLang || "",
+      targetLang || DEFAULT_TARGET_LANG
+    );
+    res.json(explanation);
+  } catch (err) {
+    console.error("[explain] error:", err.message);
+    res.status(502).json({ error: "Nie udalo sie wygenerowac wyjasnienia. Sprobuj ponownie." });
+  }
+});
+
+app.get("/api/phrases", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  res.json(listPhrases(userId));
+});
+
+app.post("/api/phrases", (req, res) => {
+  const {
+    userId,
+    phrase,
+    sourceLang,
+    translation,
+    targetLang,
+    contextSentence,
+    meaning,
+    example,
+    pronunciation,
+    sourceLabel,
+    sourceUrl,
+  } = req.body || {};
+  if (!userId || !phrase || !translation) {
+    return res.status(400).json({ error: "Brak wymaganych pol (userId, phrase, translation)." });
+  }
+  const saved = addPhrase({
+    id: crypto.randomUUID(),
+    userId,
+    phrase,
+    sourceLang: sourceLang || "",
+    translation,
+    targetLang: targetLang || DEFAULT_TARGET_LANG,
+    contextSentence: contextSentence || "",
+    meaning: meaning || "",
+    example: example || "",
+    pronunciation: pronunciation || "",
+    sourceLabel: sourceLabel || "",
+    sourceUrl: sourceUrl || "",
+    capturedAt: Date.now(),
+  });
+  res.status(201).json(saved);
+});
+
+app.delete("/api/phrases/:id", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  const ok = deletePhrase(userId, req.params.id);
+  if (!ok) return res.status(404).json({ error: "Nie znaleziono." });
+  res.status(204).end();
+});
+
+/**
+ * One-shot (non-streaming) explanation of a word/phrase the user picked out
+ * of a transcript line: its translation, what it means in THAT sentence
+ * (not a generic dictionary definition), a fresh example, and pronunciation.
+ * JSON mode guarantees a parseable response instead of free-form prose.
+ */
+async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: TRANSLATION_MODEL,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `Jestes nauczycielem jezyka pomagajacym zrozumiec fraze usłyszana w prawdziwej mowie${
+              sourceLang ? ` (jezyk: ${sourceLang})` : ""
+            }. Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown, bez komentarzy) z polami: ` +
+            `"translation" (krotkie tlumaczenie samej frazy na jezyk ${targetLang}), ` +
+            `"meaning" (1-2 zdania po polsku/${targetLang} wyjasniajace co ta fraza znaczy KONKRETNIE w podanym kontekscie, nie ogolna definicja slownikowa), ` +
+            `"example" (jedno NOWE przykladowe zdanie w jezyku oryginalnej frazy, inne niz podany kontekst, uzywajace tej frazy), ` +
+            `"pronunciation" (wymowa frazy - IPA jesli to sensowne dla tego jezyka, inaczej prosty zapis fonetyczny; pusty string jesli nie da sie sensownie podac).`,
+        },
+        {
+          role: "user",
+          content: `Fraza: "${phrase}"\nZdanie, w ktorym padla: "${contextSentence}"`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "{}";
+  const parsed = JSON.parse(content);
+  return {
+    phrase,
+    translation: parsed.translation || "",
+    meaning: parsed.meaning || "",
+    example: parsed.example || "",
+    pronunciation: parsed.pronunciation || "",
+  };
+}
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/stream" });

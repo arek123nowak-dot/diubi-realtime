@@ -80,7 +80,7 @@ async function startCapture(tabId, targetLang) {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
 
   await setActiveTabId(tabId);
-  chrome.tabs.sendMessage(tabId, { type: "show-overlay" }).catch(() => {});
+  chrome.tabs.sendMessage(tabId, { type: "show-overlay", targetLang }).catch(() => {});
 
   chrome.runtime.sendMessage({
     target: "offscreen",

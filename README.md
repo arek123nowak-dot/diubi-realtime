@@ -1,25 +1,38 @@
 # DIUBI — prototyp tłumaczenia na żywo
 
-Minimalny, działający szkielet real-time captioningu: przechwytuje dźwięk z
-karty przeglądarki (np. otwarty w innej karcie odcinek Dreaming Spanish),
-transkrybuje go na bieżąco (OpenAI Realtime API), tłumaczy każde ukończone
-zdanie strumieniowo (Chat Completions) i pokazuje oba teksty na żywo.
+Silnik real-time: przechwytuje dźwięk z karty przeglądarki (strona webowa) albo
+z aktywnej karty bezpośrednio (rozszerzenie Chrome, `extension/`), transkrybuje
+go na bieżąco (OpenAI Realtime API), tłumaczy każde ukończone zdanie
+strumieniowo (Chat Completions) i pokazuje oba teksty na żywo, obok siebie.
 
-To jest prototyp walidujący core value prop DIUBI ("understand the world" w
-czasie rzeczywistym) — nie jest jeszcze podpięty pod Bubble/konto usera/bazę
-słówek. Te elementy zostają w Bubble; ten serwis to osobny, lekki "silnik
-real-time".
+Druga warstwa, ponad samym tłumaczeniem: zaznaczenie słowa/frazy w oryginale
+pokazuje jej wyjaśnienie w tym konkretnym kontekście (nie ogólną definicję
+słownikową) + przykład + wymowę, z przyciskiem **⭐ Zapamiętaj** zapisującym
+frazę razem z kontekstowym zdaniem, źródłem i datą do **Mój pamiętnik** —
+to jest pierwszy pełny cykl produktu (słuchasz → nie rozumiesz → klikasz →
+rozumiesz → zapisujesz → wracasz później), nie tylko translator.
 
 ## Architektura
 
 ```
-przeglądarka (tab z audio) --getDisplayMedia--> app.js
-      --PCM16 16kHz przez WebSocket--> server.js
+przeglądarka (tab z audio) --getDisplayMedia / tabCapture--> app.js / extension
+      --PCM16 24kHz przez WebSocket--> server.js
       --relay--> OpenAI Realtime API (transkrypcja, streaming)
                  |
                  +--> po każdym ukończonym zdaniu --> Chat Completions
-                      (streaming tłumaczenie) --> z powrotem do przeglądarki
+                      (streaming tłumaczenie) --> z powrotem do klienta
+
+      zaznaczenie frazy --> POST /api/explain --> Chat Completions (JSON mode)
+      "Zapamietaj"      --> POST /api/phrases --> data/phrases.json
+      "Moj pamietnik"   --> GET  /api/phrases --> data/phrases.json
 ```
+
+Tożsamość użytkownika na tym etapie to trwałe anonimowe ID generowane w
+przeglądarce (localStorage w wersji web, `chrome.storage.local` w
+rozszerzeniu) — żadnego logowania jeszcze nie ma. To celowe uproszczenie na
+czas pierwszych testów; prawdziwe konto (magic link / Google) ma sens dopiero
+przy publicznym wdrożeniu backendu, razem z przejściem z pliku JSON na
+Postgres (patrz `store.js` — jedna tabela, migracja 1:1).
 
 ## Uruchomienie
 
@@ -55,11 +68,9 @@ przeglądarka (tab z audio) --getDisplayMedia--> app.js
 
 ## Następne kroki (do decyzji)
 
-1. Test end-to-end z prawdziwym kluczem API i realnym materiałem — potwierdzić
-   jakość transkrypcji hiszpańskiego i sensowność tłumaczenia przy typowym
-   tempie mówienia.
-2. Jeśli jakość/latencja OK: rozszerzenie do przeglądarki zamiast ręcznego
-   wyboru karty (mniej tarcia, bliżej finalnego produktu).
-3. Integracja z kontem Bubble (target_language usera, zapisywanie
-   sesji/zdań do nauki jako `Segment`/`Token` do późniejszych powtórek).
-4. Kliknięcie w słowo → istniejący mechanizm AI Context (do podłączenia).
+1. Publiczne wdrożenie backendu (Render/Railway) — dziś działa tylko lokalnie
+   (`localhost:3000`), więc tylko Ty możesz go używać.
+2. Prawdziwe konto (magic link albo Google OAuth) w miejsce anonimowego ID.
+3. Migracja `store.js` z pliku JSON na Postgres (naturalny moment: razem z
+   publicznym wdrożeniem).
+4. Prosty tryb powtórek na bazie zapisanych fraz w pamiętniku.
