@@ -40,6 +40,8 @@
         user-select: none;
       }
       .closeBtn { background: none; border: none; color: #8a92a3; cursor: pointer; font-size: 16px; line-height: 1; }
+      .brand { display: flex; align-items: center; gap: 6px; color: #e8eaed; font-weight: 600; }
+      .brand img { width: 16px; height: 16px; border-radius: 4px; }
       .reel { max-height: 220px; overflow-y: auto; scroll-behavior: smooth; }
       .row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #2a2f3a; }
       .cell { padding: 10px 12px; font-size: 0.9rem; line-height: 1.4; transition: background-color 0.3s ease; }
@@ -122,7 +124,7 @@
     </style>
     <div class="wrap" id="wrap">
       <div class="header" id="dragHandle">
-        <span>DIUBI</span>
+        <span class="brand"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt="" />DIUBI</span>
         <div class="headerBtns">
           <button class="notebookBtn" id="notebookBtn" title="Moj pamietnik">📖</button>
           <button class="closeBtn" id="closeBtn" title="Zatrzymaj i ukryj">×</button>

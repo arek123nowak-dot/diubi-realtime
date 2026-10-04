@@ -11,7 +11,8 @@
     background: #171a21;
     color: #e8eaed;
   }
-  h1 { font-size: 0.95rem; margin: 0 0 10px; }
+  h1 { font-size: 0.95rem; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  h1 img { width: 22px; height: 22px; border-radius: 5px; }
   label { font-size: 0.75rem; color: #8a92a3; display: block; margin-bottom: 4px; }
   select {
     width: 100%;
@@ -40,7 +41,7 @@
 </style>
 </head>
 <body>
-  <h1>DIUBI — napisy na zywo</h1>
+  <h1><img src="icons/icon48.png" alt="" />DIUBI — Understand The World</h1>
   <label for="targetLang">Jezyk docelowy</label>
   <select id="targetLang">
     <option value="pl" selected>Polski</option>

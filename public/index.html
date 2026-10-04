@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>DIUBI — prototyp real-time</title>
+<title>DIUBI — Understand The World</title>
+<link rel="icon" type="image/png" href="favicon.png" />
 <style>
   :root {
     color-scheme: dark;
@@ -27,7 +28,17 @@
     align-items: center;
     padding: 16px 16px 24px;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 4px; transition: font-size 0.2s ease; }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px;
+    transition: font-size 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  h1 .logo { width: 34px; height: 34px; border-radius: 8px; transition: width 0.2s ease, height 0.2s ease; }
+  body.compact h1 .logo { width: 26px; height: 26px; }
   .subtitle { color: var(--muted); margin: 0 0 16px; font-size: 0.9rem; transition: all 0.2s ease; }
   /* Added once a source is loaded, to reclaim vertical space the intro
      text and full source picker no longer need to occupy. */
@@ -347,7 +358,7 @@
 </style>
 </head>
 <body>
-  <h1>DIUBI — prototyp tlumaczenia na zywo</h1>
+  <h1><img class="logo" src="logo.png" alt="DIUBI" />DIUBI — Understand The World</h1>
   <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
 
   <div class="source-bar">
