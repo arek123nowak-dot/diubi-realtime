@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<style>
+  body {
+    width: 240px;
+    margin: 0;
+    padding: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #171a21;
+    color: #e8eaed;
+  }
+  h1 { font-size: 0.95rem; margin: 0 0 10px; }
+  label { font-size: 0.75rem; color: #8a92a3; display: block; margin-bottom: 4px; }
+  select {
+    width: 100%;
+    background: #0d0f13;
+    border: 1px solid #2a2f3a;
+    color: #e8eaed;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+  }
+  .btns { display: flex; gap: 8px; }
+  button {
+    flex: 1;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #startBtn { background: #4f8cff; color: white; }
+  #stopBtn { background: #2a2f3a; color: #e8eaed; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #status { font-size: 0.75rem; color: #8a92a3; margin-top: 10px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+  <h1>DIUBI — napisy na zywo</h1>
+  <label for="targetLang">Jezyk docelowy</label>
+  <select id="targetLang">
+    <option value="pl" selected>Polski</option>
+    <option value="en">English</option>
+    <option value="es">Espanol</option>
+    <option value="de">Deutsch</option>
+    <option value="fr">Francais</option>
+    <option value="it">Italiano</option>
+    <option value="pt">Portugues</option>
+    <option value="nl">Nederlands</option>
+    <option value="sv">Svenska</option>
+    <option value="cs">Cestina</option>
+    <option value="ro">Romana</option>
+    <option value="uk">Ukrainska</option>
+    <option value="ru">Rosyjski</option>
+    <option value="tr">Turecki</option>
+    <option value="el">Greckie</option>
+    <option value="ar">Arabski</option>
+    <option value="hi">Hindi</option>
+    <option value="ja">Japonski</option>
+    <option value="ko">Koreanski</option>
+    <option value="zh">Chinski</option>
+  </select>
+  <div class="btns">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn">Stop</button>
+  </div>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
