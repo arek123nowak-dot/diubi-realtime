@@ -82,6 +82,9 @@ class TranscriptionSession {
     // ever hardcoding an expected language, since the source is auto-detected
     // and could legitimately be anything.
     this.scriptCounts = {};
+    // Per-item_id accumulator for sentence-boundary splitting — see the
+    // delta/completed handlers below.
+    this.deltaBuffers = new Map();
   }
 
   start() {
@@ -159,19 +162,32 @@ class TranscriptionSession {
     }
 
     switch (event.type) {
-      case "conversation.item.input_audio_transcription.delta":
+      case "conversation.item.input_audio_transcription.delta": {
         sendJson(this.clientWs, { type: "transcript_delta", text: event.delta || "" });
+
+        // Translating only once the VAD turn ends means a fast talker with
+        // no 700ms pause produces one giant backlog, translated all at once
+        // long after it was actually said. Splitting off each complete
+        // sentence as soon as it appears mid-turn keeps translation pace
+        // with speech instead of batching a whole paragraph at a time.
+        const itemId = event.item_id;
+        const buffered = (this.deltaBuffers.get(itemId) || "") + (event.delta || "");
+        const { sentences, remainder } = splitCompleteSentences(buffered);
+        for (const sentence of sentences) {
+          this.emitSentence(sentence);
+        }
+        this.deltaBuffers.set(itemId, remainder);
         break;
+      }
 
       case "conversation.item.input_audio_transcription.completed": {
-        const text = (event.transcript || "").trim();
-        // Single-character transcripts are almost always ASR noise from a
-        // spurious VAD-triggered segment (silence, breath, background hum).
-        if (text.length > 1 && !this.isScriptOutlier(text)) {
-          const segmentId = ++this.segmentCounter;
-          sendJson(this.clientWs, { type: "transcript_final", text, segmentId });
-          this.translate(text, segmentId);
-        }
+        const itemId = event.item_id;
+        const remainder = (this.deltaBuffers.get(itemId) || "").trim();
+        this.deltaBuffers.delete(itemId);
+        // Whatever's left over wasn't followed by sentence-ending
+        // punctuation+space before the turn ended (e.g. it trailed off, or
+        // the whole turn was just a short interjection) — flush it as-is.
+        if (remainder) this.emitSentence(remainder);
         break;
       }
 
@@ -186,6 +202,18 @@ class TranscriptionSession {
       default:
         // Inne typy eventow (np. sygnaly VAD) na razie ignorujemy.
         break;
+    }
+  }
+
+  /** Filters and forwards one sentence-sized chunk of transcript, same checks as before, just now called once per sentence instead of once per whole VAD turn. */
+  emitSentence(text) {
+    const trimmed = text.trim();
+    // Single-character transcripts are almost always ASR noise from a
+    // spurious VAD-triggered segment (silence, breath, background hum).
+    if (trimmed.length > 1 && !this.isScriptOutlier(trimmed)) {
+      const segmentId = ++this.segmentCounter;
+      sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
+      this.translate(trimmed, segmentId);
     }
   }
 
@@ -284,6 +312,31 @@ class TranscriptionSession {
       this.upstream.close();
     }
   }
+}
+
+/**
+ * Splits off every complete sentence from `text`, keeping only a trailing
+ * fragment (not yet followed by punctuation+space, so possibly still
+ * mid-word) as the remainder to keep accumulating. Punctuation right at the
+ * very end of the buffer is deliberately NOT treated as a split point —
+ * more of the same sentence could still be streaming in.
+ */
+function splitCompleteSentences(text) {
+  const boundary = /[.!?]+\s/g;
+  let lastEnd = -1;
+  let match;
+  while ((match = boundary.exec(text))) {
+    lastEnd = match.index + match[0].length;
+  }
+  if (lastEnd === -1) return { sentences: [], remainder: text };
+
+  const complete = text.slice(0, lastEnd);
+  const remainder = text.slice(lastEnd);
+  const sentences = complete
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { sentences, remainder };
 }
 
 const SCRIPT_RANGES = [
