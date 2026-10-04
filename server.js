@@ -82,9 +82,15 @@ class TranscriptionSession {
     // ever hardcoding an expected language, since the source is auto-detected
     // and could legitimately be anything.
     this.scriptCounts = {};
-    // Per-item_id accumulator for sentence-boundary splitting — see the
-    // delta/completed handlers below.
-    this.deltaBuffers = new Map();
+    // Accumulates transcript text ACROSS committed chunks (not reset per
+    // item_id) so a sentence split awkwardly across a forced commit still
+    // gets translated whole once it actually completes — see the
+    // delta/completed handlers and the force-commit timer below.
+    this.textBuffer = "";
+    this.lastDeltaAt = Date.now();
+    this.hasUncommittedAudio = false;
+    this.forceCommitTimer = null;
+    this.idleFlushTimer = null;
   }
 
   start() {
@@ -142,6 +148,31 @@ class TranscriptionSession {
 
       sendJson(this.clientWs, { type: "status", message: "polaczono z ASR" });
       sendJson(this.clientWs, { type: "ready" });
+
+      // Natural VAD silence can be 15-20+ seconds away during fast,
+      // continuous speech (confirmed in testing) — nothing transcribes at
+      // all until then, since VAD is what triggers OpenAI to even start
+      // processing a chunk. Forcing a commit every 5s of uninterrupted
+      // speech means transcription (and translation) keeps pace even when
+      // the speaker never pauses; the cross-chunk sentence buffer below is
+      // what stops that from cutting a sentence in half.
+      this.forceCommitTimer = setInterval(() => {
+        if (this.hasUncommittedAudio && this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
+          this.upstream.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          this.hasUncommittedAudio = false;
+        }
+      }, 5000);
+
+      // Safety net: if the buffer has a dangling fragment (last chunk
+      // trailed off without sentence-ending punctuation) and nothing new
+      // has arrived in a while — speaker went quiet, stream ended, etc. —
+      // send it rather than hold it forever.
+      this.idleFlushTimer = setInterval(() => {
+        if (this.textBuffer && Date.now() - this.lastDeltaAt > 4000) {
+          this.emitSentence(this.textBuffer);
+          this.textBuffer = "";
+        }
+      }, 2000);
     });
 
     upstream.on("message", (raw) => {
@@ -170,32 +201,32 @@ class TranscriptionSession {
     switch (event.type) {
       case "conversation.item.input_audio_transcription.delta": {
         sendJson(this.clientWs, { type: "transcript_delta", text: event.delta || "" });
+        this.lastDeltaAt = Date.now();
 
-        // Translating only once the VAD turn ends means a fast talker with
-        // no 700ms pause produces one giant backlog, translated all at once
-        // long after it was actually said. Splitting off each complete
-        // sentence as soon as it appears mid-turn keeps translation pace
-        // with speech instead of batching a whole paragraph at a time.
-        const itemId = event.item_id;
-        const buffered = (this.deltaBuffers.get(itemId) || "") + (event.delta || "");
-        const { sentences, remainder } = splitCompleteSentences(buffered);
+        // Accumulated ACROSS committed chunks on purpose: a forced 5s
+        // commit (see the timer above) can land mid-sentence, and we'd
+        // rather wait for the words still to come than translate a
+        // fragment. Only a run of sentence-ending punctuation actually
+        // drains the buffer.
+        this.textBuffer += event.delta || "";
+        const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
         for (const sentence of sentences) {
           this.emitSentence(sentence);
         }
-        this.deltaBuffers.set(itemId, remainder);
+        this.textBuffer = remainder;
         break;
       }
 
-      case "conversation.item.input_audio_transcription.completed": {
-        const itemId = event.item_id;
-        const remainder = (this.deltaBuffers.get(itemId) || "").trim();
-        this.deltaBuffers.delete(itemId);
-        // Whatever's left over wasn't followed by sentence-ending
-        // punctuation+space before the turn ended (e.g. it trailed off, or
-        // the whole turn was just a short interjection) — flush it as-is.
-        if (remainder) this.emitSentence(remainder);
+      case "conversation.item.input_audio_transcription.completed":
+        // No per-item flush here anymore — a completed turn (natural VAD
+        // end OR a forced periodic commit) doesn't mean the current
+        // sentence is actually finished. The idle-flush timer is what
+        // eventually sends a trailing fragment if nothing follows it.
         break;
-      }
+
+      case "input_audio_buffer.committed":
+        this.hasUncommittedAudio = false;
+        break;
 
       case "error":
         console.error("[openai] error event:", JSON.stringify(event));
@@ -253,6 +284,7 @@ class TranscriptionSession {
       this.upstream.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: base64Audio })
       );
+      this.hasUncommittedAudio = true;
     } else if (!this.closed && this.pendingAudio.length < 300) {
       // Capped so a stuck/never-opening upstream connection can't grow this
       // unbounded; 300 chunks is roughly a minute of buffered audio.
@@ -314,6 +346,8 @@ class TranscriptionSession {
   stop() {
     if (this.closed) return;
     this.closed = true;
+    clearInterval(this.forceCommitTimer);
+    clearInterval(this.idleFlushTimer);
     if (this.upstream && this.upstream.readyState === WebSocket.OPEN) {
       this.upstream.close();
     }
