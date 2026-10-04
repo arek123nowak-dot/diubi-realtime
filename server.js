@@ -117,9 +117,15 @@ class TranscriptionSession {
                 noise_reduction: { type: "near_field" },
                 turn_detection: {
                   type: "server_vad",
-                  threshold: 0.6,
+                  threshold: 0.5,
                   prefix_padding_ms: 300,
-                  silence_duration_ms: 700,
+                  // VAD only controls how audio gets chunked for transcription
+                  // in this session type — this is the main lever for how
+                  // long speech sits unprocessed before anything happens.
+                  // Pulled back down from 700ms now that the script-outlier
+                  // and 1-char filters catch more of the resulting noise, so
+                  // this can prioritize responsiveness again.
+                  silence_duration_ms: 450,
                 },
               },
             },
