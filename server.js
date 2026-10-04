@@ -140,7 +140,7 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
               sourceLang ? ` (jezyk: ${sourceLang})` : ""
             }. Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown, bez komentarzy) z polami: ` +
             `"translation" (krotkie tlumaczenie samej frazy na jezyk ${targetLang}), ` +
-            `"meaning" (1-2 zdania po polsku/${targetLang} wyjasniajace co ta fraza znaczy KONKRETNIE w podanym kontekscie, nie ogolna definicja slownikowa), ` +
+            `"meaning" (1-2 zdania w jezyku ${targetLang} wyjasniajace co ta fraza znaczy KONKRETNIE w podanym kontekscie, nie ogolna definicja slownikowa), ` +
             `"example" (jedno NOWE przykladowe zdanie w jezyku oryginalnej frazy, inne niz podany kontekst, uzywajace tej frazy), ` +
             `"pronunciation" (wymowa frazy - IPA jesli to sensowne dla tego jezyka, inaczej prosty zapis fonetyczny; pusty string jesli nie da sie sensownie podac).`,
         },
