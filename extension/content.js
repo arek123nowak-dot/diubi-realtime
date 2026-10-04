@@ -56,19 +56,25 @@
          this, same idea and markup as the web app's version (public/app.js),
          just scoped into this shadow tree so it can't leak host-page styles
          in or its own styles out. */
-      .explain-trigger {
+      .word {
+        cursor: pointer;
+        border-radius: 3px;
+        padding: 0 1px;
+        transition: background-color 0.15s ease;
+      }
+      .word:hover { background: rgba(79, 140, 255, 0.35); }
+      .word-badge {
         position: fixed;
         transform: translate(-50%, -100%);
         background: #4f8cff;
         color: white;
-        border: none;
         border-radius: 999px;
-        padding: 7px 14px;
-        font-size: 0.82rem;
+        padding: 3px 10px;
+        font-size: 0.7rem;
         font-weight: 600;
-        cursor: pointer;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
         z-index: 2147483647;
+        white-space: nowrap;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
       .modal-overlay {
@@ -195,7 +201,7 @@
       }
       case "transcript_final": {
         const row = claimRow(msg.segmentId);
-        row.originalCell.textContent = msg.text;
+        renderClickableWords(row.originalCell, msg.text);
         row.originalCell.classList.remove("active");
         scrollToBottom();
         break;
@@ -292,45 +298,68 @@
     return { sourceLabel: (document.title || location.hostname).slice(0, 120), sourceUrl: location.href };
   }
 
-  let explainTrigger = null;
-
-  document.addEventListener("mouseup", (e) => {
-    if (explainTrigger && explainTrigger.contains(e.target)) return;
-    removeExplainTrigger();
-
-    const selection = document.getSelection();
-    const text = selection && selection.toString().trim();
-    if (!text || !selection.rangeCount) return;
-
-    const anchorEl =
-      selection.anchorNode?.nodeType === Node.TEXT_NODE ? selection.anchorNode.parentElement : selection.anchorNode;
-    const cell = anchorEl?.closest?.(".cell.original");
-    if (!cell) return;
-
-    showExplainTrigger(text, cell.textContent, selection.getRangeAt(0));
-  });
-
-  function showExplainTrigger(phrase, contextSentence, range) {
-    const rect = range.getBoundingClientRect();
-    const btn = document.createElement("button");
-    btn.className = "explain-trigger";
-    btn.textContent = "Wyjasnij ⭐";
-    btn.style.left = `${rect.left + rect.width / 2}px`;
-    btn.style.top = `${Math.max(rect.top - 8, 36)}px`;
-    btn.addEventListener("click", () => {
-      openExplainCard(phrase, contextSentence);
-      removeExplainTrigger();
-    });
-    shadow.appendChild(btn);
-    explainTrigger = btn;
+  /** Same tokenizer as public/app.js — see the comment there for why this
+   * replaced a text-selection based picker: host pages like YouTube
+   * commonly suppress selection globally (so dragging the seek bar etc.
+   * doesn't accidentally select page text), which silently broke the
+   * selection approach here specifically, even though it worked fine on
+   * DIUBI's own web app page. Hover+click never touches the Selection API,
+   * so it isn't exposed to that at all. */
+  function renderClickableWords(cell, text) {
+    cell.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    for (const token of text.split(/(\s+)/)) {
+      if (token === "") continue;
+      if (/^\s+$/.test(token)) {
+        frag.appendChild(document.createTextNode(token));
+      } else {
+        const span = document.createElement("span");
+        span.className = "word";
+        span.textContent = token;
+        frag.appendChild(span);
+      }
+    }
+    cell.appendChild(frag);
   }
 
-  function removeExplainTrigger() {
-    if (explainTrigger) {
-      explainTrigger.remove();
-      explainTrigger = null;
+  let wordBadge = null;
+
+  function showWordBadge(wordEl) {
+    removeWordBadge();
+    const rect = wordEl.getBoundingClientRect();
+    const badge = document.createElement("div");
+    badge.className = "word-badge";
+    badge.textContent = "Wyjasnij ⭐";
+    badge.style.left = `${rect.left + rect.width / 2}px`;
+    badge.style.top = `${rect.top - 6}px`;
+    shadow.appendChild(badge);
+    wordBadge = badge;
+  }
+
+  function removeWordBadge() {
+    if (wordBadge) {
+      wordBadge.remove();
+      wordBadge = null;
     }
   }
+
+  reelEl.addEventListener("mouseover", (e) => {
+    const wordEl = e.target.closest(".word");
+    if (wordEl) showWordBadge(wordEl);
+  });
+  reelEl.addEventListener("mouseout", (e) => {
+    if (e.target.closest(".word")) removeWordBadge();
+  });
+  reelEl.addEventListener("click", (e) => {
+    const wordEl = e.target.closest(".word");
+    if (!wordEl) return;
+    const cell = wordEl.closest(".cell.original");
+    if (!cell) return;
+    const phrase = wordEl.textContent.replace(/^[.,!?;:"'()]+|[.,!?;:"'()]+$/g, "");
+    if (!phrase) return;
+    removeWordBadge();
+    openExplainCard(phrase, cell.textContent);
+  });
 
   function openModal(innerHtml) {
     const overlay = document.createElement("div");

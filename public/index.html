@@ -216,24 +216,29 @@
 
   #notebookBtn { background: #2a2f3a; color: var(--text); }
 
-  /* Floating "Wyjasnij" button that appears next to a text selection in the
-     original-language column — appended straight to <body> (fixed
-     positioning next to a Selection's bounding rect, not tied to any one
-     row), removed again as soon as the explanation card opens or the
-     selection is dismissed. */
-  .explain-trigger {
+  /* Every word in the original-language column is individually clickable —
+     hover darkens it and shows a small "Wyjasnij" hint above it (via
+     word-badge, positioned in JS from the hovered word's own bounding
+     rect), click opens the explanation card. */
+  .word {
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0 1px;
+    transition: background-color 0.15s ease;
+  }
+  .word:hover { background: rgba(79, 140, 255, 0.35); }
+  .word-badge {
     position: fixed;
     transform: translate(-50%, -100%);
     background: var(--accent);
     color: white;
-    border: none;
     border-radius: 999px;
-    padding: 7px 14px;
-    font-size: 0.82rem;
+    padding: 3px 10px;
+    font-size: 0.72rem;
     font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
     z-index: 500;
+    white-space: nowrap;
   }
 
   .modal-overlay {

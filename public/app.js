@@ -277,7 +277,7 @@ function handleServerMessage(msg) {
     }
     case "transcript_final": {
       const row = claimRow(msg.segmentId);
-      row.originalCell.textContent = msg.text;
+      renderClickableWords(row.originalCell, msg.text);
       row.originalCell.classList.remove("active");
       scrollToBottom();
       break;
@@ -450,46 +450,72 @@ function currentSourceMeta() {
   };
 }
 
-let explainTrigger = null;
-
-document.addEventListener("mouseup", (e) => {
-  // Ignore mouseup on the trigger button itself (its own click handler
-  // below needs the selection to still be live when it fires).
-  if (explainTrigger && explainTrigger.contains(e.target)) return;
-  removeExplainTrigger();
-
-  const selection = window.getSelection();
-  const text = selection.toString().trim();
-  if (!text || selection.rangeCount === 0) return;
-
-  const anchorEl = selection.anchorNode?.nodeType === Node.TEXT_NODE ? selection.anchorNode.parentElement : selection.anchorNode;
-  const cell = anchorEl?.closest?.(".cell.original");
-  if (!cell) return;
-
-  showExplainTrigger(text, cell.textContent, selection.getRangeAt(0));
-});
-
-function showExplainTrigger(phrase, contextSentence, range) {
-  const rect = range.getBoundingClientRect();
-  const btn = document.createElement("button");
-  btn.className = "explain-trigger";
-  btn.textContent = "Wyjasnij ⭐";
-  btn.style.left = `${rect.left + rect.width / 2}px`;
-  btn.style.top = `${Math.max(rect.top - 8, 36)}px`;
-  btn.addEventListener("click", () => {
-    openExplainCard(phrase, contextSentence);
-    removeExplainTrigger();
-  });
-  document.body.appendChild(btn);
-  explainTrigger = btn;
+/** Splits `text` into individual clickable word spans (whitespace kept as
+ * plain text nodes between them), replacing `cell`'s content. Used instead
+ * of a plain textContent assignment so each word can show a hover highlight
+ * + "Wyjasnij" hint and respond to a click on its own — a text-selection
+ * based picker turned out to not be obvious ("you have to drag-select the
+ * EXACT text"), and on top of that didn't work at all inside the extension's
+ * overlay (host pages like YouTube commonly suppress text selection
+ * globally so dragging the video seek bar etc. doesn't accidentally select
+ * page text, which blocked ours too since the event is page-wide). Hover +
+ * click sidesteps both problems entirely — it never touches the Selection
+ * API. */
+function renderClickableWords(cell, text) {
+  cell.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (const token of text.split(/(\s+)/)) {
+    if (token === "") continue;
+    if (/^\s+$/.test(token)) {
+      frag.appendChild(document.createTextNode(token));
+    } else {
+      const span = document.createElement("span");
+      span.className = "word";
+      span.textContent = token;
+      frag.appendChild(span);
+    }
+  }
+  cell.appendChild(frag);
 }
 
-function removeExplainTrigger() {
-  if (explainTrigger) {
-    explainTrigger.remove();
-    explainTrigger = null;
+let wordBadge = null;
+
+function showWordBadge(wordEl) {
+  removeWordBadge();
+  const rect = wordEl.getBoundingClientRect();
+  const badge = document.createElement("div");
+  badge.className = "word-badge";
+  badge.textContent = "Wyjasnij ⭐";
+  badge.style.left = `${rect.left + rect.width / 2}px`;
+  badge.style.top = `${rect.top - 6}px`;
+  document.body.appendChild(badge);
+  wordBadge = badge;
+}
+
+function removeWordBadge() {
+  if (wordBadge) {
+    wordBadge.remove();
+    wordBadge = null;
   }
 }
+
+reelEl.addEventListener("mouseover", (e) => {
+  const wordEl = e.target.closest(".word");
+  if (wordEl) showWordBadge(wordEl);
+});
+reelEl.addEventListener("mouseout", (e) => {
+  if (e.target.closest(".word")) removeWordBadge();
+});
+reelEl.addEventListener("click", (e) => {
+  const wordEl = e.target.closest(".word");
+  if (!wordEl) return;
+  const cell = wordEl.closest(".cell.original");
+  if (!cell) return;
+  const phrase = wordEl.textContent.replace(/^[.,!?;:"'()]+|[.,!?;:"'()]+$/g, "");
+  if (!phrase) return;
+  removeWordBadge();
+  openExplainCard(phrase, cell.textContent);
+});
 
 function openModal(innerHtml) {
   const overlay = document.createElement("div");
