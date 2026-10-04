@@ -87,6 +87,7 @@ class TranscriptionSession {
     // gets translated whole once it actually completes — see the
     // delta/completed handlers and the force-commit timer below.
     this.textBuffer = "";
+    this.textBufferStartedAt = null;
     this.lastDeltaAt = Date.now();
     this.hasUncommittedAudio = false;
     this.forceCommitTimer = null;
@@ -194,14 +195,23 @@ class TranscriptionSession {
         this.quietSinceMs = null;
       }, 200);
 
-      // Safety net: if the buffer has a dangling fragment (last chunk
-      // trailed off without sentence-ending punctuation) and nothing new
-      // has arrived in a while — speaker went quiet, stream ended, etc. —
-      // send it rather than hold it forever.
+      // Safety net, two conditions: (1) the buffer has a dangling fragment
+      // and nothing new has arrived in a while — speaker went quiet, stream
+      // ended, etc.; (2) deltas KEEP arriving but a sentence boundary never
+      // shows up — confirmed in testing: differences in audio quality
+      // between capture methods made this common enough on one client that
+      // it ran on indefinitely, mashing fragments from separate chunks
+      // together with no translation ever firing. Either way, flush rather
+      // than hold out for punctuation that isn't coming.
+      const MAX_BUFFER_AGE_MS = 8000;
       this.idleFlushTimer = setInterval(() => {
-        if (this.textBuffer && Date.now() - this.lastDeltaAt > 4000) {
+        if (!this.textBuffer) return;
+        const idleFor = Date.now() - this.lastDeltaAt;
+        const bufferAge = Date.now() - this.textBufferStartedAt;
+        if (idleFor > 4000 || bufferAge > MAX_BUFFER_AGE_MS) {
           this.emitSentence(this.textBuffer);
           this.textBuffer = "";
+          this.textBufferStartedAt = null;
         }
       }, 2000);
     });
@@ -239,12 +249,14 @@ class TranscriptionSession {
         // rather wait for the words still to come than translate a
         // fragment. Only a run of sentence-ending punctuation actually
         // drains the buffer.
+        if (!this.textBuffer) this.textBufferStartedAt = Date.now();
         this.textBuffer += event.delta || "";
         const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
         for (const sentence of sentences) {
           this.emitSentence(sentence);
         }
         this.textBuffer = remainder;
+        if (!this.textBuffer) this.textBufferStartedAt = null;
         break;
       }
 
