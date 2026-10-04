@@ -562,11 +562,7 @@ async function openExplainCard(phrase, contextSentence) {
   card.innerHTML = `
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
-    <div class="field-label">Tlumaczenie</div>
-    <div class="field-value">${escapeHtml(data.translation)}</div>
-    ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
-    ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
-    ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
+    ${explainFieldsHtml(data)}
     <div class="modal-actions">
       <button class="btn-remember">⭐ Zapamietaj</button>
       <button class="btn-close">Zamknij</button>
@@ -585,6 +581,30 @@ async function openExplainCard(phrase, contextSentence) {
       rememberBtn.textContent = "⭐ Zapamietaj (sprobuj znowu)";
     }
   });
+}
+
+/** Shared translation/meaning/example/pronunciation block markup, used both
+ * for a freshly fetched explanation and for reopening one already saved in
+ * the notebook (same look either way, no reason for the saved version to
+ * look like a lesser summary of the original card). */
+function explainFieldsHtml(data) {
+  return `
+    <div class="field-label">Tlumaczenie</div>
+    <div class="field-value">${escapeHtml(data.translation)}</div>
+    ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
+    ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
+    ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
+  `;
+}
+
+function showSavedPhraseCard(p) {
+  const overlay = openModal(`
+    <h2>${escapeHtml(p.phrase)}</h2>
+    <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
+    ${explainFieldsHtml(p)}
+    <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+  `);
+  overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
 }
 
 async function saveToNotebook(phrase, contextSentence, explainData) {
@@ -652,7 +672,7 @@ function renderNotebook(card, phrases) {
   const itemsHtml = phrases
     .map(
       (p) => `
-      <div class="notebook-item" data-id="${p.id}">
+      <div class="notebook-item" data-id="${p.id}" tabindex="0">
         <button class="np-delete" title="Usun">✕</button>
         <div class="np-phrase">${escapeHtml(p.phrase)}</div>
         <div class="np-translation">${escapeHtml(p.translation)}</div>
@@ -669,7 +689,8 @@ function renderNotebook(card, phrases) {
   `;
   card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
   card.querySelectorAll(".np-delete").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       const item = btn.closest(".notebook-item");
       const id = item.dataset.id;
       btn.disabled = true;
@@ -680,6 +701,12 @@ function renderNotebook(card, phrases) {
       } catch {
         btn.disabled = false;
       }
+    });
+  });
+  card.querySelectorAll(".notebook-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const p = phrases.find((ph) => ph.id === item.dataset.id);
+      if (p) showSavedPhraseCard(p);
     });
   });
 }

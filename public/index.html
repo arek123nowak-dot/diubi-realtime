@@ -301,7 +301,10 @@
     border-radius: 10px;
     padding: 12px 14px;
     position: relative;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
   }
+  .notebook-item:hover { border-color: var(--accent); }
   .notebook-item .np-phrase { font-weight: 700; font-size: 1rem; }
   .notebook-item .np-translation { color: var(--accent); margin-top: 2px; }
   .notebook-item .np-context {

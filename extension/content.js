@@ -111,7 +111,8 @@
       .modal-card .loading, .modal-card .error-text { color: #8a92a3; font-size: 0.88rem; }
       .modal-card .error-text { color: #ff5a5a; }
       .notebook-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-      .notebook-item { border: 1px solid #2a2f3a; border-radius: 10px; padding: 12px 14px; position: relative; }
+      .notebook-item { border: 1px solid #2a2f3a; border-radius: 10px; padding: 12px 14px; position: relative; cursor: pointer; transition: border-color 0.15s ease; }
+      .notebook-item:hover { border-color: #4f8cff; }
       .notebook-item .np-phrase { font-weight: 700; font-size: 0.95rem; }
       .notebook-item .np-translation { color: #4f8cff; margin-top: 2px; }
       .notebook-item .np-context { color: #8a92a3; font-size: 0.8rem; margin-top: 6px; font-style: italic; }
@@ -413,11 +414,7 @@
     card.innerHTML = `
       <h2>${escapeHtml(phrase)}</h2>
       <p class="phrase-src">${escapeHtml(contextSentence)}</p>
-      <div class="field-label">Tlumaczenie</div>
-      <div class="field-value">${escapeHtml(data.translation)}</div>
-      ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
-      ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
-      ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
+      ${explainFieldsHtml(data)}
       <div class="modal-actions">
         <button class="btn-remember">⭐ Zapamietaj</button>
         <button class="btn-close">Zamknij</button>
@@ -436,6 +433,26 @@
         rememberBtn.textContent = "⭐ Zapamietaj (sprobuj znowu)";
       }
     });
+  }
+
+  function explainFieldsHtml(data) {
+    return `
+      <div class="field-label">Tlumaczenie</div>
+      <div class="field-value">${escapeHtml(data.translation)}</div>
+      ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
+      ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
+      ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
+    `;
+  }
+
+  function showSavedPhraseCard(p) {
+    const overlay = openModal(`
+      <h2>${escapeHtml(p.phrase)}</h2>
+      <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
+      ${explainFieldsHtml(p)}
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `);
+    overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
   }
 
   async function saveToNotebook(phrase, contextSentence, explainData) {
@@ -526,6 +543,13 @@
         } catch {
           btn.disabled = false;
         }
+      });
+    });
+    card.querySelectorAll(".notebook-item").forEach((item) => {
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".np-delete")) return;
+        const p = phrases.find((ph) => ph.id === item.dataset.id);
+        if (p) showSavedPhraseCard(p);
       });
     });
   }
