@@ -64,54 +64,57 @@
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   #status { font-size: 0.85rem; color: var(--muted); margin-top: 12px; min-height: 1.2em; }
   #status.error { color: var(--error); }
-  .panels {
+  .reel-wrap {
     width: 100%;
     max-width: 1000px;
     margin-top: 24px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-  .panel {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
-  .panel-header {
+  .reel-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .reel-header span {
     padding: 10px 20px;
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--muted);
-    border-bottom: 1px solid var(--border);
   }
+  .reel-header span:first-child { border-right: 1px solid var(--border); }
+  /* One shared scrollbar for both columns, so they always move together
+     and a translation never drifts out of line with its original. */
   .reel {
     height: 240px;
     overflow-y: auto;
     scroll-behavior: smooth;
   }
-  .line {
-    padding: 12px 20px;
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .cell {
+    padding: 14px 20px;
     line-height: 1.5;
     font-size: 1.05rem;
-    border-bottom: 1px solid var(--border);
     transition: background-color 0.3s ease;
   }
-  .line.active { background: rgba(255, 255, 255, 0.05); }
-  #originalReel .line {
-    text-decoration: underline;
-    text-decoration-color: #ff6b6b70;
-    text-decoration-thickness: 2px;
-    text-underline-offset: 4px;
+  .cell.original {
+    border-right: 1px solid var(--border);
+    background: rgba(255, 107, 107, 0.07);
   }
-  #translationReel .line {
-    text-decoration: underline;
-    text-decoration-color: #4caf5070;
-    text-decoration-thickness: 2px;
-    text-underline-offset: 4px;
+  .cell.original.active { background: rgba(255, 107, 107, 0.22); }
+  .cell.translation {
+    background: rgba(76, 175, 80, 0.07);
     font-weight: 500;
   }
+  .cell.translation.active { background: rgba(76, 175, 80, 0.22); }
+  .cell:empty::after { content: "\00a0"; }
   .hint { max-width: 1000px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
 </style>
 </head>
@@ -133,15 +136,12 @@
   </div>
   <div id="status"></div>
 
-  <div class="panels">
-    <div class="panel">
-      <div class="panel-header">Oryginal</div>
-      <div class="reel" id="originalReel"></div>
+  <div class="reel-wrap">
+    <div class="reel-header">
+      <span>Oryginal</span>
+      <span>Tlumaczenie</span>
     </div>
-    <div class="panel">
-      <div class="panel-header">Tlumaczenie</div>
-      <div class="reel" id="translationReel"></div>
-    </div>
+    <div class="reel" id="reel"></div>
   </div>
 
   <p class="hint">
