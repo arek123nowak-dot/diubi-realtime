@@ -64,34 +64,61 @@
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   #status { font-size: 0.85rem; color: var(--muted); margin-top: 12px; min-height: 1.2em; }
   #status.error { color: var(--error); }
-  .panels {
+  .reel-wrap {
     width: 100%;
-    max-width: 900px;
+    max-width: 1000px;
     margin-top: 24px;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-  .panel {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 20px;
-    min-height: 160px;
+    overflow: hidden;
   }
-  .panel h2 {
-    margin: 0 0 12px;
-    font-size: 0.75rem;
+  .reel-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .reel-header span {
+    padding: 10px 20px;
+    font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--muted);
   }
-  .line { margin: 0 0 6px; line-height: 1.5; }
-  .line.live { color: var(--accent); }
-  #original .line { color: #c7cbd4; }
-  #original .line.live { color: var(--text); }
-  #translation .line { color: #d8e6ff; font-weight: 500; }
-  .hint { max-width: 900px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
+  .reel-header span:first-child { border-right: 1px solid var(--border); }
+  .reel {
+    height: 240px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+    transition: background-color 0.3s ease;
+  }
+  .row.active { background: rgba(255, 255, 255, 0.05); }
+  .cell {
+    padding: 16px 20px;
+    line-height: 1.5;
+    font-size: 1.05rem;
+  }
+  .cell.original {
+    border-right: 1px solid var(--border);
+    text-decoration: underline;
+    text-decoration-color: #ff6b6b70;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+  .cell.translation {
+    text-decoration: underline;
+    text-decoration-color: #4caf5070;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+    font-weight: 500;
+  }
+  .cell:empty::after { content: "\00a0"; }
+  .hint { max-width: 1000px; color: var(--muted); font-size: 0.8rem; margin-top: 20px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -112,15 +139,12 @@
   </div>
   <div id="status"></div>
 
-  <div class="panels">
-    <div class="panel">
-      <h2>Oryginal</h2>
-      <div id="original"></div>
+  <div class="reel-wrap">
+    <div class="reel-header">
+      <span>Oryginal</span>
+      <span>Tlumaczenie</span>
     </div>
-    <div class="panel">
-      <h2>Tlumaczenie</h2>
-      <div id="translation"></div>
-    </div>
+    <div class="reel" id="reel"></div>
   </div>
 
   <p class="hint">

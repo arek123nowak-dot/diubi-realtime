@@ -1,20 +1,24 @@
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
-const originalEl = document.getElementById("original");
-const translationEl = document.getElementById("translation");
+const reelEl = document.getElementById("reel");
 const sourceLangInput = document.getElementById("sourceLang");
 const targetLangInput = document.getElementById("targetLang");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
+const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
 
 let ws = null;
 let audioContext = null;
 let processorNode = null;
 let sourceNode = null;
 let displayStream = null;
-let liveOriginalLine = null;
-let liveTranslationLine = null;
+
+// Rows are keyed by the server's segmentId so a translation always lands in
+// the same row as its original sentence, even if two sentences are mid-
+// translation at once. The in-progress sentence (before its segmentId is
+// known) lives under the "pending" key and gets re-keyed once it finalizes.
+const rows = new Map();
 
 startBtn.addEventListener("click", start);
 stopBtn.addEventListener("click", stop);
@@ -47,6 +51,9 @@ async function start() {
 }
 
 function openSocket() {
+  rows.clear();
+  reelEl.innerHTML = "";
+
   const target = encodeURIComponent(targetLangInput.value.trim() || "pl");
   const source = encodeURIComponent(sourceLangInput.value.trim());
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -80,48 +87,76 @@ function handleServerMessage(msg) {
     case "error":
       setStatus(msg.message, true);
       break;
-    case "transcript_delta":
-      liveOriginalLine = liveOriginalLine || appendLine(originalEl, "", true);
-      liveOriginalLine.textContent += msg.text;
+    case "transcript_delta": {
+      const row = getOrCreateRow("pending");
+      row.originalCell.textContent += msg.text;
+      row.el.classList.add("active");
+      scrollToBottom();
       break;
-    case "transcript_final":
-      if (liveOriginalLine) {
-        liveOriginalLine.textContent = msg.text;
-        liveOriginalLine.classList.remove("live");
-        liveOriginalLine = null;
-      } else {
-        appendLine(originalEl, msg.text, false);
-      }
-      scrollToBottom(originalEl);
+    }
+    case "transcript_final": {
+      const row = claimRow(msg.segmentId);
+      row.originalCell.textContent = msg.text;
+      scrollToBottom();
       break;
-    case "translation_delta":
-      liveTranslationLine = liveTranslationLine || appendLine(translationEl, "", true);
-      liveTranslationLine.textContent += msg.text;
-      scrollToBottom(translationEl);
+    }
+    case "translation_delta": {
+      const row = getOrCreateRow(msg.segmentId);
+      row.translationCell.textContent += msg.text;
+      row.el.classList.add("active");
+      scrollToBottom();
       break;
-    case "translation_final":
-      if (liveTranslationLine) {
-        liveTranslationLine.textContent = msg.text;
-        liveTranslationLine.classList.remove("live");
-        liveTranslationLine = null;
-      } else {
-        appendLine(translationEl, msg.text, false);
-      }
-      scrollToBottom(translationEl);
+    }
+    case "translation_final": {
+      const row = getOrCreateRow(msg.segmentId);
+      row.translationCell.textContent = msg.text;
+      row.el.classList.remove("active");
+      pruneOldRows();
+      scrollToBottom();
       break;
+    }
   }
 }
 
-function appendLine(container, text, live) {
-  const div = document.createElement("p");
-  div.className = "line" + (live ? " live" : "");
-  div.textContent = text;
-  container.appendChild(div);
-  return div;
+/** Returns the row for `id`, creating (and appending) it if it doesn't exist yet. */
+function getOrCreateRow(id) {
+  let row = rows.get(id);
+  if (!row) {
+    const el = document.createElement("div");
+    el.className = "row";
+    const originalCell = document.createElement("div");
+    originalCell.className = "cell original";
+    const translationCell = document.createElement("div");
+    translationCell.className = "cell translation";
+    el.append(originalCell, translationCell);
+    reelEl.appendChild(el);
+    row = { el, originalCell, translationCell };
+    rows.set(id, row);
+  }
+  return row;
 }
 
-function scrollToBottom(container) {
-  container.scrollTop = container.scrollHeight;
+/** Moves the in-progress "pending" row (if any) to its real segmentId once the server assigns one. */
+function claimRow(segmentId) {
+  const pending = rows.get("pending");
+  if (pending) {
+    rows.delete("pending");
+    rows.set(segmentId, pending);
+    return pending;
+  }
+  return getOrCreateRow(segmentId);
+}
+
+function pruneOldRows() {
+  while (rows.size > MAX_ROWS_KEPT) {
+    const oldestId = rows.keys().next().value;
+    rows.get(oldestId).el.remove();
+    rows.delete(oldestId);
+  }
+}
+
+function scrollToBottom() {
+  reelEl.scrollTop = reelEl.scrollHeight;
 }
 
 function startCapture() {
@@ -179,8 +214,6 @@ function stop() {
   if (processorNode) processorNode.disconnect();
   if (sourceNode) sourceNode.disconnect();
   if (audioContext) audioContext.close();
-  liveOriginalLine = null;
-  liveTranslationLine = null;
   startBtn.disabled = false;
   stopBtn.disabled = true;
   setStatus("Zatrzymano.");
