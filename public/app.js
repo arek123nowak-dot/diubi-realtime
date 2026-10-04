@@ -9,6 +9,7 @@ const sourceUrlInput = document.getElementById("sourceUrlInput");
 const loadSourceBtn = document.getElementById("loadSourceBtn");
 const playerWrap = document.getElementById("playerWrap");
 const notebookBtn = document.getElementById("notebookBtn");
+const spotifyHint = document.getElementById("spotifyHint");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -45,6 +46,11 @@ sourceBtns.forEach((btn) => {
     sourceUrlInput.placeholder =
       selectedPlatform === "spotify" ? "Wklej link do odcinka Spotify..." : "Wklej link do filmu YouTube...";
     sourceUrlInput.focus();
+    // Spotify's free embed only plays a 30s preview unless the viewer is
+    // logged into Premium inside the widget itself - nothing DIUBI's code
+    // can change, so the only honest fix is telling people upfront instead
+    // of letting it cut off mid-sentence with no explanation.
+    spotifyHint.classList.toggle("visible", selectedPlatform === "spotify");
   });
 });
 
@@ -100,6 +106,7 @@ function collapseSourcePicker() {
   // title subtitle, and later the hint text no longer need to be on screen.
   document.querySelector(".source-bar").style.display = "none";
   sourceInputRow.style.display = "none";
+  spotifyHint.style.display = "none";
   document.body.classList.add("compact");
 }
 

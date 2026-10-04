@@ -72,6 +72,20 @@
     margin-top: 10px;
   }
   .source-input-row.visible { display: flex; }
+  .spotify-hint {
+    display: none;
+    width: 100%;
+    max-width: 900px;
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.35);
+    border-radius: 8px;
+    color: #ffc107;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .spotify-hint.visible { display: block; }
   .source-input-row input {
     flex: 1;
     width: auto;
@@ -347,6 +361,10 @@
     <input id="sourceUrlInput" placeholder="Wklej link do odcinka/filmu..." />
     <button id="loadSourceBtn">Wczytaj</button>
   </div>
+  <p class="spotify-hint" id="spotifyHint">
+    ⚠ Bez zalogowania na konto Spotify Premium w widgecie ponizej, Spotify odtworzy tylko 30-sekundowy podglad
+    utworu/odcinka, nie cala tresc.
+  </p>
 
   <div class="player-wrap" id="playerWrap"></div>
 
