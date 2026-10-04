@@ -99,6 +99,14 @@ class TranscriptionSession {
     this.recentAmplitude = 0;
     this.sinceLastCommitAt = Date.now();
     this.quietSinceMs = null;
+
+    // TEMPORARY cost-measurement instrumentation (see [USAGE] log lines) —
+    // lets a short real-world test session convert directly into an actual
+    // $/minute figure instead of an estimate. Safe to remove once that
+    // measurement is done; doesn't affect any behavior.
+    this.startedAt = Date.now();
+    this.sentAudioMs = 0;
+    this.translationRequests = 0;
   }
 
   start() {
@@ -239,6 +247,15 @@ class TranscriptionSession {
       return;
     }
 
+    // TEMPORARY: OpenAI includes a `usage` object on some events once a
+    // transcription item completes — surfacing it here (whatever shape it
+    // turns out to have) means a single real test session gives us the
+    // actual token counts to price against, instead of the estimate in the
+    // cost audit. Grep server logs for "[USAGE]" after a test run.
+    if (event.usage) {
+      console.log(`[USAGE][${event.type}]`, JSON.stringify(event.usage));
+    }
+
     switch (event.type) {
       case "conversation.item.input_audio_transcription.delta": {
         sendJson(this.clientWs, { type: "transcript_delta", text: event.delta || "" });
@@ -346,6 +363,13 @@ class TranscriptionSession {
     const SILENCE_THRESHOLD = 150;
     if (this.recentAmplitude < SILENCE_THRESHOLD) return;
 
+    // TEMPORARY: total real speech audio actually forwarded to the ASR
+    // model (silence already excluded above) — the other half of the
+    // [USAGE] measurement, since OpenAI's own usage counters are priced per
+    // audio token, not per second, and we want the $/minute conversion.
+    const audioBytes = Buffer.from(base64Audio, "base64").length;
+    this.sentAudioMs += (audioBytes / 2 / TARGET_SAMPLE_RATE) * 1000;
+
     if (this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
       this.upstream.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: base64Audio })
@@ -372,6 +396,11 @@ class TranscriptionSession {
         body: JSON.stringify({
           model: TRANSLATION_MODEL,
           stream: true,
+          // TEMPORARY: streaming responses omit token usage unless asked for
+          // explicitly — this is the other half of the [USAGE] cost
+          // measurement (text side; audio side is logged in
+          // handleUpstreamEvent/sendAudioChunk above).
+          stream_options: { include_usage: true },
           temperature: 0.2,
           messages: [
             {
@@ -402,11 +431,15 @@ class TranscriptionSession {
             translated += token;
             sendJson(this.clientWs, { type: "translation_delta", text: token, segmentId });
           }
+          if (parsed.usage) {
+            console.log(`[USAGE][translation]`, JSON.stringify(parsed.usage));
+          }
         } catch {
           // pomijamy niepelne/nieparsowalne fragmenty SSE
         }
       }
 
+      this.translationRequests++;
       sendJson(this.clientWs, { type: "translation_final", text: translated, segmentId });
     } catch (err) {
       // Network-level failures (fetch throwing outright, e.g. a dropped
@@ -438,6 +471,17 @@ class TranscriptionSession {
     if (this.upstream && this.upstream.readyState === WebSocket.OPEN) {
       this.upstream.close();
     }
+
+    // TEMPORARY: wall-clock session length next to actual audio forwarded
+    // and translation request count — paired with the [USAGE] token counts
+    // logged above, this is everything needed to compute a real $/minute
+    // figure from one test session.
+    const sessionSec = (Date.now() - this.startedAt) / 1000;
+    console.log(
+      `[USAGE SUMMARY] session=${sessionSec.toFixed(1)}s audioSentToASR=${(this.sentAudioMs / 1000).toFixed(
+        1
+      )}s translationRequests=${this.translationRequests} segments=${this.segmentCounter}`
+    );
   }
 }
 
