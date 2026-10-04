@@ -29,6 +29,62 @@
   }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 0.9rem; }
+  .source-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    max-width: 900px;
+  }
+  .source-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .source-btn.selected { border-color: var(--accent); background: #1c2433; }
+  .source-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .source-btn .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .source-btn[data-platform="youtube"] .dot { background: #ff0033; }
+  .source-btn[data-platform="spotify"] .dot { background: #1db954; }
+  .source-btn[data-platform="facebook"] .dot { background: #1877f2; }
+  .source-btn[data-platform="podcast"] .dot { background: #8a62ff; }
+  .source-input-row {
+    display: none;
+    gap: 8px;
+    width: 100%;
+    max-width: 900px;
+    margin-top: 10px;
+  }
+  .source-input-row.visible { display: flex; }
+  .source-input-row input {
+    flex: 1;
+    width: auto;
+  }
+  .player-wrap {
+    display: none;
+    width: 100%;
+    max-width: 900px;
+    margin-top: 16px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+  }
+  .player-wrap.visible { display: block; }
+  .player-wrap.ratio-video { aspect-ratio: 16 / 9; }
+  .player-wrap iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .player-wrap.ratio-audio iframe { height: 232px; }
   .controls {
     display: flex;
     flex-wrap: wrap;
@@ -120,15 +176,25 @@
 </head>
 <body>
   <h1>DIUBI — prototyp tlumaczenia na zywo</h1>
-  <p class="subtitle">Podpiecie napisow na zywo pod dowolne audio odtwarzane w karcie przegladarki</p>
+  <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
+
+  <div class="source-bar">
+    <button class="source-btn" data-platform="youtube"><span class="dot"></span>YouTube</button>
+    <button class="source-btn" data-platform="spotify"><span class="dot"></span>Spotify</button>
+    <button class="source-btn" data-platform="facebook" disabled title="Wkrotce"><span class="dot"></span>Facebook</button>
+    <button class="source-btn" data-platform="podcast" disabled title="Wkrotce"><span class="dot"></span>Podcast (RSS)</button>
+  </div>
+
+  <div class="source-input-row" id="sourceInputRow">
+    <input id="sourceUrlInput" placeholder="Wklej link do odcinka/filmu..." />
+    <button id="loadSourceBtn">Wczytaj</button>
+  </div>
+
+  <div class="player-wrap" id="playerWrap"></div>
 
   <div class="controls">
     <div>
-      <label for="sourceLang">Jezyk zrodlowy (puste = auto)</label>
-      <input id="sourceLang" placeholder="np. es" />
-    </div>
-    <div>
-      <label for="targetLang">Jezyk docelowy</label>
+      <label for="targetLang">Jezyk docelowy (tlumaczenie)</label>
       <input id="targetLang" value="pl" />
     </div>
     <button id="startBtn">Start</button>
@@ -145,9 +211,9 @@
   </div>
 
   <p class="hint">
-    Klikajac "Start" wybierz w oknie przegladarki kartę, w której leci audio (np. otwarty w drugiej karcie odcinek
-    Dreaming Spanish) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio". Obraz nie jest wymagany —
-    liczy sie tylko sciezka dzwiekowa.
+    Zrodlowy jezyk wykrywany jest automatycznie — niezaleznie czy to hiszpanski, niemiecki czy angielski, wystarczy
+    ze podasz jezyk docelowy powyzej. Klikajac "Start" wybierz w oknie przegladarki <strong>te karte</strong> (zeby
+    zlapac dzwiek z osadzonego odtwarzacza powyzej) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio".
   </p>
 
   <script src="app.js"></script>

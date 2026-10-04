@@ -2,8 +2,12 @@ const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
 const reelEl = document.getElementById("reel");
-const sourceLangInput = document.getElementById("sourceLang");
 const targetLangInput = document.getElementById("targetLang");
+const sourceBtns = document.querySelectorAll(".source-btn:not(:disabled)");
+const sourceInputRow = document.getElementById("sourceInputRow");
+const sourceUrlInput = document.getElementById("sourceUrlInput");
+const loadSourceBtn = document.getElementById("loadSourceBtn");
+const playerWrap = document.getElementById("playerWrap");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -21,8 +25,54 @@ let displayStream = null;
 // it finalizes.
 const rows = new Map();
 
+let selectedPlatform = null;
+
 startBtn.addEventListener("click", start);
 stopBtn.addEventListener("click", stop);
+loadSourceBtn.addEventListener("click", loadSource);
+sourceUrlInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") loadSource();
+});
+sourceBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    selectedPlatform = btn.dataset.platform;
+    sourceBtns.forEach((b) => b.classList.toggle("selected", b === btn));
+    sourceInputRow.classList.add("visible");
+    sourceUrlInput.placeholder =
+      selectedPlatform === "spotify" ? "Wklej link do odcinka Spotify..." : "Wklej link do filmu YouTube...";
+    sourceUrlInput.focus();
+  });
+});
+
+function loadSource() {
+  const url = sourceUrlInput.value.trim();
+  if (!url || !selectedPlatform) return;
+
+  const embedSrc = selectedPlatform === "youtube" ? buildYouTubeEmbed(url) : buildSpotifyEmbed(url);
+  if (!embedSrc) {
+    setStatus(`Nie rozpoznaje tego linku jako ${selectedPlatform === "youtube" ? "YouTube" : "Spotify"}.`, true);
+    return;
+  }
+
+  playerWrap.innerHTML = "";
+  const iframe = document.createElement("iframe");
+  iframe.src = embedSrc;
+  iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+  iframe.allowFullscreen = true;
+  playerWrap.appendChild(iframe);
+  playerWrap.className = "player-wrap visible " + (selectedPlatform === "youtube" ? "ratio-video" : "ratio-audio");
+  setStatus("Odtwarzacz zaladowany. Wcisnij play, a potem 'Start' ponizej.");
+}
+
+function buildYouTubeEmbed(url) {
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? `https://www.youtube.com/embed/${match[1]}?autoplay=1` : null;
+}
+
+function buildSpotifyEmbed(url) {
+  const match = url.match(/open\.spotify\.com\/(?:intl-\w+\/)?(episode|show|track)\/([a-zA-Z0-9]+)/);
+  return match ? `https://open.spotify.com/embed/${match[1]}/${match[2]}` : null;
+}
 
 async function start() {
   startBtn.disabled = true;
@@ -55,10 +105,11 @@ function openSocket() {
   rows.clear();
   reelEl.innerHTML = "";
 
+  // Source language is always auto-detected server-side — the user only
+  // ever picks the target language they want to read.
   const target = encodeURIComponent(targetLangInput.value.trim() || "pl");
-  const source = encodeURIComponent(sourceLangInput.value.trim());
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/stream?target=${target}&source=${source}`);
+  ws = new WebSocket(`${proto}://${location.host}/stream?target=${target}`);
 
   ws.onopen = () => {
     setStatus("Polaczono. Uruchamiam przechwytywanie audio...");
