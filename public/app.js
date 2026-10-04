@@ -27,7 +27,10 @@ const rows = new Map();
 
 let selectedPlatform = null;
 
-startBtn.addEventListener("click", start);
+// Plain "Start" (no source loaded through the picker above) is the manual
+// two-tab flow: the user already has the audio playing in some other tab,
+// so the normal picker — not a preference for this tab — is what they need.
+startBtn.addEventListener("click", () => start({ preferCurrentTab: false }));
 stopBtn.addEventListener("click", stop);
 loadSourceBtn.addEventListener("click", loadSource);
 sourceUrlInput.addEventListener("keydown", (e) => {
@@ -171,7 +174,7 @@ function showEmbedBlockedFallback(originalUrl) {
   playerWrap.className = "player-wrap visible ratio-fallback";
   document.getElementById("embedFallbackBtn").addEventListener("click", () => {
     window.open(originalUrl, "_blank");
-    start();
+    start({ preferCurrentTab: false });
   });
 }
 
@@ -185,20 +188,25 @@ function playEmbeddedSource() {
   // now it keeps its default behavior (user presses play in the widget).
 }
 
-async function start() {
+async function start(options = {}) {
+  const { preferCurrentTab = true } = options;
   captureReady = false;
   startBtn.disabled = true;
-  setStatus('To okno przegladarki prosi o zgode, nie nasza apka — wybierz "Ta karta" i zaznacz dzwiek.');
+  setStatus(
+    preferCurrentTab
+      ? 'To okno przegladarki prosi o zgode, nie nasza apka — wybierz "Ta karta" i zaznacz dzwiek.'
+      : "Wybierz w oknie przegladarki karte z filmem, ktora wlasnie sie otworzyla, i zaznacz dzwiek."
+  );
 
   try {
     displayStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,
       // Chrome-only: without this, the calling tab itself is excluded from
-      // the share picker, which is exactly the tab we actually want here
-      // (the one with the embedded player). Unsupported browsers just
-      // ignore the unknown property.
-      preferCurrentTab: true,
+      // the share picker. Good when we want OUR tab (the embedded player);
+      // wrong for the "open in a new tab" fallback below, where the tab we
+      // actually want is the one that just opened, not this one.
+      preferCurrentTab,
     });
   } catch (err) {
     setStatus(`Nie udalo sie uzyskac dostepu do audio: ${err.message}`, true);
