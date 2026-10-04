@@ -61,7 +61,13 @@ function loadSource() {
   iframe.allowFullscreen = true;
   playerWrap.appendChild(iframe);
   playerWrap.className = "player-wrap visible " + (selectedPlatform === "youtube" ? "ratio-video" : "ratio-audio");
-  setStatus("Odtwarzacz zaladowany. Wcisnij play, a potem 'Start' ponizej.");
+
+  // Triggered from the same click as "Wczytaj", so the browser still treats
+  // this as a direct response to a user gesture and allows getDisplayMedia
+  // without a second button press. The native tab-share dialog that follows
+  // is the browser's own permission prompt, not a question from this app —
+  // pick "This tab" so it captures the embed that was just loaded above.
+  start();
 }
 
 function buildYouTubeEmbed(url) {
@@ -76,7 +82,7 @@ function buildSpotifyEmbed(url) {
 
 async function start() {
   startBtn.disabled = true;
-  setStatus("Proszę wybierz karte z dzwiekiem w oknie przegladarki...");
+  setStatus('To okno przegladarki prosi o zgode, nie nasza apka — wybierz "Ta karta" i zaznacz dzwiek.');
 
   try {
     displayStream = await navigator.mediaDevices.getDisplayMedia({
