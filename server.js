@@ -562,7 +562,11 @@ class TranscriptionSession {
         this.textBuffer += event.delta || "";
         const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
         for (const sentence of sentences) {
-          this.emitSentence(sentence);
+          // event.item_id here is whatever commit's audio produced the
+          // delta that just completed this sentence - the real end-of-
+          // speech anchor for the clip, same idea as textBufferStartItemId
+          // for the start (see captureClip).
+          this.emitSentence(sentence, event.item_id);
         }
         this.textBuffer = remainder;
         if (!this.textBuffer) {
@@ -619,7 +623,7 @@ class TranscriptionSession {
   }
 
   /** Filters and forwards one sentence-sized chunk of transcript, same checks as before, just now called once per sentence instead of once per whole VAD turn. */
-  emitSentence(text) {
+  emitSentence(text, endItemId) {
     const trimmed = text.trim();
     // Single-character transcripts are almost always ASR noise from a
     // spurious VAD-triggered segment (silence, breath, background hum).
@@ -627,7 +631,7 @@ class TranscriptionSession {
       const segmentId = ++this.segmentCounter;
       sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
       this.translate(trimmed, segmentId);
-      this.captureClip(segmentId, trimmed);
+      this.captureClip(segmentId, trimmed, endItemId);
     }
   }
 
@@ -645,24 +649,32 @@ class TranscriptionSession {
    * at real sessions and see whether it's actually landing on the right
    * audio before trusting it further.
    */
-  captureClip(segmentId, text) {
+  captureClip(segmentId, text, endItemId) {
     const MAX_CLIP_SEGMENTS = 80;
     const now = Date.now();
 
-    // Prefer the REAL audio window of the commit that contained this
-    // sentence's first words (see pendingCommitWindows/itemAudioWindows) —
-    // we control commit timing ourselves, so this is an actual timestamp,
-    // not a guess. Small safety margins only, since it's already accurate:
-    // our commits land on natural pauses (QUIET_HOLD_MS), so the true start
-    // of speech is right at or just before the window's recorded start.
-    // Falls back to the old heuristic (estimating from when transcript text
-    // arrived, padded generously) only if we somehow never got a window for
-    // this item - e.g. right at session start before any commit has been
-    // acknowledged yet.
-    const realWindow = this.textBufferStartItemId ? this.itemAudioWindows.get(this.textBufferStartItemId) : null;
-    const usingRealWindow = Boolean(realWindow);
-    const windowStart = usingRealWindow ? realWindow.start - 500 : (this.textBufferStartedAt || now) - 4000;
-    const windowEnd = usingRealWindow ? now + 500 : now + 2000;
+    // Prefer REAL audio windows on both ends (see pendingCommitWindows/
+    // itemAudioWindows) — we control commit timing ourselves, so these are
+    // actual timestamps, not guesses:
+    //   - start: the window of the commit whose audio produced this
+    //     sentence's FIRST delta (textBufferStartItemId).
+    //   - end: the window of the commit whose audio produced the delta that
+    //     completed the sentence (endItemId, passed in from emitSentence).
+    // Small safety margins only, since these are accurate now - our commits
+    // land on natural pauses (QUIET_HOLD_MS), so speech genuinely starts/
+    // ends right around each window's recorded edge. Previously the end
+    // side used `now + 2000ms` (a flat guess from processing time), which
+    // reliably overshot into the next sentence once the start side got
+    // precise enough to expose it - confirmed in testing: clips starting
+    // correctly but running a few seconds past where the saved sentence
+    // actually ends. Falls back to the old heuristic only if we somehow
+    // never got a window for the relevant item - e.g. right at session
+    // start before any commit has been acknowledged yet.
+    const startWindow = this.textBufferStartItemId ? this.itemAudioWindows.get(this.textBufferStartItemId) : null;
+    const endWindow = endItemId ? this.itemAudioWindows.get(endItemId) : null;
+    const usingRealWindow = Boolean(startWindow && endWindow);
+    const windowStart = startWindow ? startWindow.start - 300 : (this.textBufferStartedAt || now) - 4000;
+    const windowEnd = endWindow ? endWindow.end + 300 : now + 2000;
 
     const chunksInWindow = this.audioRing.filter((c) => c.ts >= windowStart && c.ts <= windowEnd);
     const oldestInRing = this.audioRing[0]?.ts ?? null;
