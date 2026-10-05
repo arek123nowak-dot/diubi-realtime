@@ -22,6 +22,28 @@ let sourceNode = null;
 let displayStream = null;
 let currentSessionId = null; // from the server's "ready" message — lets a saved phrase point back to its audio clip
 
+// Counts currently-playing saved clips. While capture is live (Start still
+// active), getDisplayMedia is capturing THIS tab's audio output - including
+// our own clip <audio> elements - so replaying a saved clip would otherwise
+// get picked up as new incoming speech and re-transcribed/re-translated by
+// the same session that's still listening (confirmed in testing: the exact
+// saved sentence looping through the transcript several times in a row,
+// once per playback). A counter, not a boolean, so overlapping playback
+// (unlikely in this UI, but cheap to get right) can't under-count back to
+// zero while another clip is still going.
+let activeClipPlaybacks = 0;
+
+function wireClipAudio(audioEl) {
+  audioEl.addEventListener("play", () => {
+    activeClipPlaybacks++;
+  });
+  const release = () => {
+    activeClipPlaybacks = Math.max(0, activeClipPlaybacks - 1);
+  };
+  audioEl.addEventListener("pause", release);
+  audioEl.addEventListener("ended", release);
+}
+
 // Rows are keyed by the server's segmentId so a translation always lands in
 // the same row as its original sentence (and both share one scrollbar, so
 // they can never drift out of sync). The in-progress sentence (before its
@@ -397,7 +419,9 @@ function startCapture() {
   const ratio = audioContext.sampleRate / TARGET_SAMPLE_RATE;
 
   processorNode.onaudioprocess = (event) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // See activeClipPlaybacks above - tab capture would otherwise hear our
+    // own clip playback and feed it right back in as new speech.
+    if (!ws || ws.readyState !== WebSocket.OPEN || activeClipPlaybacks > 0) return;
 
     const input = event.inputBuffer;
     const channelCount = input.numberOfChannels;
@@ -555,7 +579,11 @@ reelEl.addEventListener("click", (e) => {
   if (!phrase) return;
   removeWordBadge();
   const segmentId = cell.dataset.segmentId ? Number(cell.dataset.segmentId) : null;
-  openExplainCard(phrase, cell.textContent, segmentId);
+  // Already sitting right there in the row's other column — the live
+  // translation pipeline already produced it, no reason to ask the AI to
+  // translate the sentence a second time just for this card.
+  const sentenceTranslation = cell.parentElement.querySelector(".cell.translation")?.textContent || "";
+  openExplainCard(phrase, cell.textContent, segmentId, sentenceTranslation);
 });
 
 function openModal(innerHtml) {
@@ -569,10 +597,11 @@ function openModal(innerHtml) {
   return overlay;
 }
 
-async function openExplainCard(phrase, contextSentence, segmentId) {
+async function openExplainCard(phrase, contextSentence, segmentId, sentenceTranslation) {
   const overlay = openModal(`
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
+    ${phraseSrcTranslationHtml(sentenceTranslation)}
     <p class="loading">Szukam wyjasnienia...</p>
   `);
 
@@ -603,6 +632,7 @@ async function openExplainCard(phrase, contextSentence, segmentId) {
   card.innerHTML = `
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
+    ${phraseSrcTranslationHtml(sentenceTranslation)}
     ${explainFieldsHtml(data)}
     <div class="modal-actions">
       <button class="btn-remember">⭐ Zapamietaj</button>
@@ -615,7 +645,7 @@ async function openExplainCard(phrase, contextSentence, segmentId) {
     rememberBtn.disabled = true;
     rememberBtn.textContent = "Zapisywanie...";
     try {
-      await saveToNotebook(phrase, contextSentence, data, segmentId);
+      await saveToNotebook(phrase, contextSentence, data, segmentId, sentenceTranslation);
       rememberBtn.textContent = "⭐ Zapisano";
     } catch {
       rememberBtn.disabled = false;
@@ -638,23 +668,44 @@ function explainFieldsHtml(data) {
   `;
 }
 
+/** Translation of the WHOLE sentence the phrase came from - distinct from
+ * explainFieldsHtml's "Tlumaczenie" (just the clicked word/phrase). Grabbed
+ * client-side from the live translation that's already on screen, so this
+ * never costs an extra AI call. */
+function phraseSrcTranslationHtml(sentenceTranslation) {
+  if (!sentenceTranslation) return "";
+  return `<p class="phrase-src-translation">${escapeHtml(sentenceTranslation)}</p>`;
+}
+
 function clipPlayerHtml(p) {
   if (!p.hasClip) return "";
   return `<div class="field-label">Oryginalny fragment</div><audio class="clip-player" controls preload="none" src="/clips/${p.id}.wav"></audio>`;
+}
+
+/** Any <audio> this card renders needs to stop the live capture pipeline
+ * from picking its playback back up as new incoming speech - otherwise
+ * replaying a saved clip gets re-transcribed and re-translated by the same
+ * session that's still listening (confirmed in testing: the exact saved
+ * sentence looping through the transcript several times in a row, once per
+ * playback). See activeClipPlaybacks / startCapture(). */
+function wireClipAudioElements(container) {
+  container.querySelectorAll("audio").forEach(wireClipAudio);
 }
 
 function showSavedPhraseCard(p) {
   const overlay = openModal(`
     <h2>${escapeHtml(p.phrase)}</h2>
     <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
+    ${phraseSrcTranslationHtml(p.sentenceTranslation)}
     ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
   `);
   overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+  wireClipAudioElements(overlay);
 }
 
-async function saveToNotebook(phrase, contextSentence, explainData, segmentId) {
+async function saveToNotebook(phrase, contextSentence, explainData, segmentId, sentenceTranslation) {
   const { sourceLabel, sourceUrl } = currentSourceMeta();
   const res = await fetch("/api/phrases", {
     method: "POST",
@@ -665,6 +716,7 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId) {
       translation: explainData.translation,
       targetLang: targetLangInput.value.trim() || "pl",
       contextSentence,
+      sentenceTranslation: sentenceTranslation || "",
       meaning: explainData.meaning,
       example: explainData.example,
       pronunciation: explainData.pronunciation,
@@ -838,6 +890,7 @@ function renderReviewPrompt(card) {
         audio.className = "review-audio clip-player";
         audio.controls = true;
         audio.src = `/clips/${p.id}.wav`;
+        wireClipAudio(audio);
         e.currentTarget.insertAdjacentElement("afterend", audio);
       }
       audio.play();
@@ -854,6 +907,8 @@ function renderReviewAnswer(card) {
     <h2>🔁 Powtórka <span class="review-progress">${reviewIndex + 1} / ${reviewQueue.length}</span></h2>
     <p class="review-prompt">Co znaczy:</p>
     <p class="review-phrase">${escapeHtml(p.phrase)}</p>
+    ${p.contextSentence ? `<p class="phrase-src">${escapeHtml(p.contextSentence)}</p>` : ""}
+    ${phraseSrcTranslationHtml(p.sentenceTranslation)}
     ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions">
@@ -870,4 +925,5 @@ function renderReviewAnswer(card) {
       card.closest(".modal-overlay").remove();
     }
   });
+  wireClipAudioElements(card);
 }
