@@ -373,6 +373,20 @@
   .notebook-empty { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 20px 0; }
 
   #mojaNaukaBtn { background: #2a2f3a; color: var(--text); }
+
+  .back-to-start-btn {
+    display: none;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-bottom: 10px;
+  }
+  .back-to-start-btn:hover { border-color: var(--accent); color: var(--text); }
+  body.compact .back-to-start-btn { display: inline-block; }
   .content-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
   .content-item {
     border: 1px solid var(--border);
@@ -414,6 +428,7 @@
 <body>
   <h1><img class="logo" src="logo.png" alt="DIUBI" />DIUBI — Understand The World</h1>
   <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
+  <button id="backToStartBtn" class="back-to-start-btn">← Wroc do wyboru zrodla</button>
 
   <div class="source-bar">
     <button class="source-btn" data-platform="youtube"><span class="dot"></span>YouTube</button>

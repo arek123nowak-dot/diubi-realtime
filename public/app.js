@@ -11,6 +11,7 @@ const playerWrap = document.getElementById("playerWrap");
 const notebookBtn = document.getElementById("notebookBtn");
 const powtorkaBtn = document.getElementById("powtorkaBtn");
 const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
+const backToStartBtn = document.getElementById("backToStartBtn");
 const spotifyHint = document.getElementById("spotifyHint");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
@@ -22,6 +23,11 @@ let processorNode = null;
 let sourceNode = null;
 let displayStream = null;
 let currentSessionId = null; // from the server's "ready" message — lets a saved phrase point back to its audio clip
+// Sent right before the server closes the socket (daily limit hit, missing
+// API key, etc). ws.onclose fires moments later and used to unconditionally
+// overwrite the status bar with a generic "connection closed" - burying the
+// one message that actually explained what happened.
+let lastErrorMessage = null;
 
 // Counts currently-playing saved clips. While capture is live (Start still
 // active), getDisplayMedia is capturing THIS tab's audio output - including
@@ -153,6 +159,41 @@ function collapseSourcePicker() {
   sourceInputRow.style.display = "none";
   spotifyHint.style.display = "none";
   document.body.classList.add("compact");
+}
+
+backToStartBtn.addEventListener("click", resetToStart);
+
+/** Undoes collapseSourcePicker() and everything loadSource()/start() set up
+ * — the only way out of a loaded source before this (short of refreshing
+ * the page), which became a real problem once "Kontynuuj" in Moja nauka
+ * gave people a reason to land on a source they then want to back out of. */
+function resetToStart() {
+  stop();
+  stopAllTracks();
+  if (ytPlayer && typeof ytPlayer.destroy === "function") ytPlayer.destroy();
+  ytPlayer = null;
+  playerIframe = null;
+  playerPlatform = null;
+  captureReady = false;
+  currentSessionId = null;
+  currentContent = null;
+  selectedPlatform = null;
+
+  playerWrap.innerHTML = "";
+  playerWrap.className = "player-wrap";
+  sourceUrlInput.value = "";
+  sourceBtns.forEach((b) => b.classList.remove("selected"));
+  sourceInputRow.classList.remove("visible");
+  spotifyHint.classList.remove("visible");
+
+  document.querySelector(".source-bar").style.display = "";
+  sourceInputRow.style.display = "";
+  spotifyHint.style.display = "";
+  document.body.classList.remove("compact");
+
+  rows.clear();
+  reelEl.innerHTML = "";
+  setStatus("");
 }
 
 function extractYouTubeId(url) {
@@ -304,6 +345,7 @@ async function start(options = {}) {
 function openSocket() {
   rows.clear();
   reelEl.innerHTML = "";
+  lastErrorMessage = null;
 
   // Source language is always auto-detected server-side — the user only
   // ever picks the target language they want to read.
@@ -326,7 +368,10 @@ function openSocket() {
   ws.onerror = () => setStatus("Blad polaczenia WebSocket.", true);
 
   ws.onclose = () => {
-    setStatus("Polaczenie zamkniete.");
+    // Don't bury a just-shown reason (daily limit hit, missing API key...)
+    // under a generic "connection closed" the moment the server closes the
+    // socket right after sending it.
+    if (!lastErrorMessage) setStatus("Polaczenie zamkniete.");
     stopBtn.disabled = true;
     startBtn.disabled = false;
   };
@@ -342,6 +387,7 @@ function handleServerMessage(msg) {
       playEmbeddedSource();
       break;
     case "error":
+      lastErrorMessage = msg.message;
       setStatus(msg.message, true);
       break;
     case "transcript_delta": {
