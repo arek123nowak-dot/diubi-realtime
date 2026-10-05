@@ -869,18 +869,53 @@ async function openReview() {
   renderReviewPrompt(card);
 }
 
+/** Backward navigation across the whole saved set — without this, Powtorka
+ * was one-way (forward-only via "Nastepna"), no way back to a phrase you
+ * just saw. Forward movement already exists per-screen (Nastepna on the
+ * answer side, skip-ahead below on the question side) with its own label/
+ * meaning there, so this only adds Prev to avoid two differently-wired
+ * "Nastepna" buttons stacked on the same card. Always lands back on the
+ * question side, not mid-answer. */
+function reviewNavHtml() {
+  return `
+    <div class="review-nav">
+      <button class="btn-secondary btn-review-prev" ${reviewIndex === 0 ? "disabled" : ""}>← Poprzednia</button>
+    </div>
+  `;
+}
+
+function wireReviewNav(card) {
+  card.querySelector(".btn-review-prev")?.addEventListener("click", () => {
+    if (reviewIndex > 0) {
+      reviewIndex--;
+      renderReviewPrompt(card);
+    }
+  });
+}
+
 function renderReviewPrompt(card) {
   const p = reviewQueue[reviewIndex];
   card.innerHTML = `
     <h2>🔁 Powtórka <span class="review-progress">${reviewIndex + 1} / ${reviewQueue.length}</span></h2>
+    ${reviewNavHtml()}
     <p class="review-prompt">Co znaczy:</p>
     <p class="review-phrase">${escapeHtml(p.phrase)}</p>
     <p class="review-hint">Przypomnij sobie znaczenie, zanim sprawdzisz odpowiedz.</p>
     <div class="modal-actions">
       ${p.hasClip ? `<button class="btn-secondary btn-play-clip">▶ Posluchaj fragmentu</button>` : ""}
       <button class="btn-remember btn-reveal">Pokaz odpowiedz</button>
+      ${
+        reviewIndex + 1 < reviewQueue.length
+          ? `<button class="btn-secondary btn-review-skip">Pomin →</button>`
+          : ""
+      }
     </div>
   `;
+  wireReviewNav(card);
+  card.querySelector(".btn-review-skip")?.addEventListener("click", () => {
+    reviewIndex++;
+    renderReviewPrompt(card);
+  });
 
   if (p.hasClip) {
     card.querySelector(".btn-play-clip").addEventListener("click", (e) => {
@@ -905,6 +940,7 @@ function renderReviewAnswer(card) {
   const hasNext = reviewIndex + 1 < reviewQueue.length;
   card.innerHTML = `
     <h2>🔁 Powtórka <span class="review-progress">${reviewIndex + 1} / ${reviewQueue.length}</span></h2>
+    ${reviewNavHtml()}
     <p class="review-prompt">Co znaczy:</p>
     <p class="review-phrase">${escapeHtml(p.phrase)}</p>
     ${p.contextSentence ? `<p class="phrase-src">${escapeHtml(p.contextSentence)}</p>` : ""}
@@ -925,5 +961,6 @@ function renderReviewAnswer(card) {
       card.closest(".modal-overlay").remove();
     }
   });
+  wireReviewNav(card);
   wireClipAudioElements(card);
 }

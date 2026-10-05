@@ -315,6 +315,16 @@ class TranscriptionSession {
     this.audioRing = [];
     this.audioRingMs = 0;
     this.segmentClips = new Map();
+    // Real audio capture windows, keyed by the item_id OpenAI assigns to
+    // each committed chunk — see the forceCommitTimer and the
+    // input_audio_buffer.committed/delta handling below. This is what makes
+    // clip extraction precise instead of a guess from when transcript text
+    // happened to arrive (which lags true speech by a variable amount - our
+    // own commit timer can batch up to 6s of audio before OpenAI even starts
+    // transcribing it).
+    this.pendingCommitWindows = [];
+    this.itemAudioWindows = new Map();
+    this.textBufferStartItemId = null;
     // Audio the client sends before the OpenAI connection finishes its
     // handshake used to be silently dropped, which lost the first couple
     // seconds of a video that starts autoplaying the instant it's loaded.
@@ -442,6 +452,12 @@ class TranscriptionSession {
         if (quietElapsed < QUIET_HOLD_MS && elapsed < MAX_CHUNK_MS) return;
 
         this.upstream.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        // Exact wall-clock window of audio in the chunk we just committed —
+        // we control commit timing ourselves, so this is a real timestamp,
+        // not a guess. Queued because we won't learn which item_id this
+        // becomes until the matching input_audio_buffer.committed event
+        // comes back (handleUpstreamEvent), in the same order we sent commits.
+        this.pendingCommitWindows.push({ start: this.sinceLastCommitAt, end: now });
         this.hasUncommittedAudio = false;
         this.sinceLastCommitAt = now;
         this.quietSinceMs = null;
@@ -539,14 +555,20 @@ class TranscriptionSession {
         // rather wait for the words still to come than translate a
         // fragment. Only a run of sentence-ending punctuation actually
         // drains the buffer.
-        if (!this.textBuffer) this.textBufferStartedAt = Date.now();
+        if (!this.textBuffer) {
+          this.textBufferStartedAt = Date.now();
+          this.textBufferStartItemId = event.item_id || null;
+        }
         this.textBuffer += event.delta || "";
         const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
         for (const sentence of sentences) {
           this.emitSentence(sentence);
         }
         this.textBuffer = remainder;
-        if (!this.textBuffer) this.textBufferStartedAt = null;
+        if (!this.textBuffer) {
+          this.textBufferStartedAt = null;
+          this.textBufferStartItemId = null;
+        }
         break;
       }
 
@@ -557,10 +579,21 @@ class TranscriptionSession {
         // eventually sends a trailing fragment if nothing follows it.
         break;
 
-      case "input_audio_buffer.committed":
+      case "input_audio_buffer.committed": {
         this.hasUncommittedAudio = false;
         this.sinceLastCommitAt = Date.now();
+        // Commits are acknowledged in the same order we sent them, so the
+        // oldest queued window is always the one this event_id belongs to.
+        const window = this.pendingCommitWindows.shift();
+        if (window && event.item_id) {
+          this.itemAudioWindows.set(event.item_id, window);
+          const MAX_TRACKED_ITEMS = 100;
+          if (this.itemAudioWindows.size > MAX_TRACKED_ITEMS) {
+            this.itemAudioWindows.delete(this.itemAudioWindows.keys().next().value);
+          }
+        }
         break;
+      }
 
       case "error":
         if (event.error?.code === "input_audio_buffer_commit_empty") {
@@ -613,14 +646,23 @@ class TranscriptionSession {
    * audio before trusting it further.
    */
   captureClip(segmentId, text) {
-    const CLIP_MARGIN_BEFORE_MS = 4000;
-    const CLIP_MARGIN_AFTER_MS = 2000;
     const MAX_CLIP_SEGMENTS = 80;
-
     const now = Date.now();
-    const textStartAt = this.textBufferStartedAt || now;
-    const windowStart = textStartAt - CLIP_MARGIN_BEFORE_MS;
-    const windowEnd = now + CLIP_MARGIN_AFTER_MS;
+
+    // Prefer the REAL audio window of the commit that contained this
+    // sentence's first words (see pendingCommitWindows/itemAudioWindows) —
+    // we control commit timing ourselves, so this is an actual timestamp,
+    // not a guess. Small safety margins only, since it's already accurate:
+    // our commits land on natural pauses (QUIET_HOLD_MS), so the true start
+    // of speech is right at or just before the window's recorded start.
+    // Falls back to the old heuristic (estimating from when transcript text
+    // arrived, padded generously) only if we somehow never got a window for
+    // this item - e.g. right at session start before any commit has been
+    // acknowledged yet.
+    const realWindow = this.textBufferStartItemId ? this.itemAudioWindows.get(this.textBufferStartItemId) : null;
+    const usingRealWindow = Boolean(realWindow);
+    const windowStart = usingRealWindow ? realWindow.start - 500 : (this.textBufferStartedAt || now) - 4000;
+    const windowEnd = usingRealWindow ? now + 500 : now + 2000;
 
     const chunksInWindow = this.audioRing.filter((c) => c.ts >= windowStart && c.ts <= windowEnd);
     const oldestInRing = this.audioRing[0]?.ts ?? null;
@@ -633,7 +675,7 @@ class TranscriptionSession {
     const clipDurationMs = clipBuffer ? (clipBuffer.length / 2 / TARGET_SAMPLE_RATE) * 1000 : 0;
 
     console.log(
-      `[CLIP CAPTURE] segment=${segmentId} text="${text}" ` +
+      `[CLIP CAPTURE] segment=${segmentId} text="${text}" usingRealWindow=${usingRealWindow} ` +
         `windowStart=${new Date(windowStart).toISOString()} windowEnd=${new Date(windowEnd).toISOString()} ` +
         `bufferAvailable=${bufferAvailable} clipDurationMs=${clipDurationMs.toFixed(0)} chunks=${chunksInWindow.length}`
     );
