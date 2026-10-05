@@ -9,6 +9,7 @@ const sourceUrlInput = document.getElementById("sourceUrlInput");
 const loadSourceBtn = document.getElementById("loadSourceBtn");
 const playerWrap = document.getElementById("playerWrap");
 const notebookBtn = document.getElementById("notebookBtn");
+const powtorkaBtn = document.getElementById("powtorkaBtn");
 const spotifyHint = document.getElementById("spotifyHint");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
@@ -19,6 +20,7 @@ let audioContext = null;
 let processorNode = null;
 let sourceNode = null;
 let displayStream = null;
+let currentSessionId = null; // from the server's "ready" message — lets a saved phrase point back to its audio clip
 
 // Rows are keyed by the server's segmentId so a translation always lands in
 // the same row as its original sentence (and both share one scrollbar, so
@@ -291,6 +293,7 @@ function handleServerMessage(msg) {
       setStatus(msg.message);
       break;
     case "ready":
+      currentSessionId = msg.sessionId || null;
       playEmbeddedSource();
       break;
     case "error":
@@ -307,6 +310,9 @@ function handleServerMessage(msg) {
       const row = claimRow(msg.segmentId);
       renderClickableWords(row.originalCell, msg.text);
       row.originalCell.classList.remove("active");
+      // Lets a click on any word in this row find its way back to the
+      // audio clip the server captured for this exact sentence.
+      row.originalCell.dataset.segmentId = msg.segmentId;
       scrollToBottom();
       break;
     }
@@ -548,7 +554,8 @@ reelEl.addEventListener("click", (e) => {
   const phrase = wordEl.textContent.replace(/^[.,!?;:"'()]+|[.,!?;:"'()]+$/g, "");
   if (!phrase) return;
   removeWordBadge();
-  openExplainCard(phrase, cell.textContent);
+  const segmentId = cell.dataset.segmentId ? Number(cell.dataset.segmentId) : null;
+  openExplainCard(phrase, cell.textContent, segmentId);
 });
 
 function openModal(innerHtml) {
@@ -562,7 +569,7 @@ function openModal(innerHtml) {
   return overlay;
 }
 
-async function openExplainCard(phrase, contextSentence) {
+async function openExplainCard(phrase, contextSentence, segmentId) {
   const overlay = openModal(`
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
@@ -608,7 +615,7 @@ async function openExplainCard(phrase, contextSentence) {
     rememberBtn.disabled = true;
     rememberBtn.textContent = "Zapisywanie...";
     try {
-      await saveToNotebook(phrase, contextSentence, data);
+      await saveToNotebook(phrase, contextSentence, data, segmentId);
       rememberBtn.textContent = "⭐ Zapisano";
     } catch {
       rememberBtn.disabled = false;
@@ -631,17 +638,23 @@ function explainFieldsHtml(data) {
   `;
 }
 
+function clipPlayerHtml(p) {
+  if (!p.hasClip) return "";
+  return `<div class="field-label">Oryginalny fragment</div><audio class="clip-player" controls preload="none" src="/clips/${p.id}.wav"></audio>`;
+}
+
 function showSavedPhraseCard(p) {
   const overlay = openModal(`
     <h2>${escapeHtml(p.phrase)}</h2>
     <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
+    ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
   `);
   overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
 }
 
-async function saveToNotebook(phrase, contextSentence, explainData) {
+async function saveToNotebook(phrase, contextSentence, explainData, segmentId) {
   const { sourceLabel, sourceUrl } = currentSourceMeta();
   const res = await fetch("/api/phrases", {
     method: "POST",
@@ -657,6 +670,8 @@ async function saveToNotebook(phrase, contextSentence, explainData) {
       pronunciation: explainData.pronunciation,
       sourceLabel,
       sourceUrl,
+      sessionId: currentSessionId,
+      segmentId,
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -711,7 +726,7 @@ function renderNotebook(card, phrases) {
         <div class="np-phrase">${escapeHtml(p.phrase)}</div>
         <div class="np-translation">${escapeHtml(p.translation)}</div>
         ${p.contextSentence ? `<div class="np-context">"${escapeHtml(p.contextSentence)}"</div>` : ""}
-        <div class="np-meta">${[p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
+        <div class="np-meta">${[p.hasClip ? "🎧" : null, p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
       </div>`
     )
     .join("");
@@ -748,4 +763,111 @@ function renderNotebook(card, phrases) {
 function formatDate(ms) {
   if (!ms) return "";
   return new Date(ms).toLocaleDateString("pl-PL", { day: "numeric", month: "short" });
+}
+
+// ---------------------------------------------------------------------------
+// Powtorka: active recall, not a passive list. The phrase comes up first,
+// alone - you try to recall it yourself, THEN (optionally) hear the real
+// audio it came from, THEN see the answer. Recall-before-reveal is the
+// whole point; showing the translation immediately would just be re-reading
+// the notebook with extra steps.
+// ---------------------------------------------------------------------------
+
+let reviewQueue = [];
+let reviewIndex = 0;
+
+powtorkaBtn.addEventListener("click", openReview);
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+async function openReview() {
+  const overlay = openModal(`<h2>🔁 Powtórka</h2><p class="loading">Wczytuje...</p>`);
+  const card = overlay.querySelector(".modal-card");
+
+  let phrases;
+  try {
+    const res = await fetch(`/api/phrases?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    phrases = await res.json();
+  } catch (err) {
+    card.innerHTML = `<h2>🔁 Powtórka</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  if (phrases.length === 0) {
+    card.innerHTML = `
+      <h2>🔁 Powtórka</h2>
+      <p class="notebook-empty">Jeszcze nic nie masz w pamietniku. Zaznacz slowo w transkrypcji i kliknij ⭐ Zapamietaj.</p>
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  reviewQueue = shuffle(phrases);
+  reviewIndex = 0;
+  renderReviewPrompt(card);
+}
+
+function renderReviewPrompt(card) {
+  const p = reviewQueue[reviewIndex];
+  card.innerHTML = `
+    <h2>🔁 Powtórka <span class="review-progress">${reviewIndex + 1} / ${reviewQueue.length}</span></h2>
+    <p class="review-prompt">Co znaczy:</p>
+    <p class="review-phrase">${escapeHtml(p.phrase)}</p>
+    <p class="review-hint">Przypomnij sobie znaczenie, zanim sprawdzisz odpowiedz.</p>
+    <div class="modal-actions">
+      ${p.hasClip ? `<button class="btn-secondary btn-play-clip">▶ Posluchaj fragmentu</button>` : ""}
+      <button class="btn-remember btn-reveal">Pokaz odpowiedz</button>
+    </div>
+  `;
+
+  if (p.hasClip) {
+    card.querySelector(".btn-play-clip").addEventListener("click", (e) => {
+      let audio = card.querySelector("audio.review-audio");
+      if (!audio) {
+        audio = document.createElement("audio");
+        audio.className = "review-audio clip-player";
+        audio.controls = true;
+        audio.src = `/clips/${p.id}.wav`;
+        e.currentTarget.insertAdjacentElement("afterend", audio);
+      }
+      audio.play();
+    });
+  }
+
+  card.querySelector(".btn-reveal").addEventListener("click", () => renderReviewAnswer(card));
+}
+
+function renderReviewAnswer(card) {
+  const p = reviewQueue[reviewIndex];
+  const hasNext = reviewIndex + 1 < reviewQueue.length;
+  card.innerHTML = `
+    <h2>🔁 Powtórka <span class="review-progress">${reviewIndex + 1} / ${reviewQueue.length}</span></h2>
+    <p class="review-prompt">Co znaczy:</p>
+    <p class="review-phrase">${escapeHtml(p.phrase)}</p>
+    ${clipPlayerHtml(p)}
+    ${explainFieldsHtml(p)}
+    <div class="modal-actions">
+      <button class="btn-remember btn-review-next">${hasNext ? "Nastepna →" : "Zakoncz powtorke"}</button>
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelector(".btn-review-next").addEventListener("click", () => {
+    if (hasNext) {
+      reviewIndex++;
+      renderReviewPrompt(card);
+    } else {
+      card.closest(".modal-overlay").remove();
+    }
+  });
 }

@@ -6,6 +6,14 @@ const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const { listPhrases, addPhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
+const { CLIPS_DIR, saveClip, deleteClip } = require("./clips");
+
+// Looked up by sessionId when a "Zapamietaj" click needs that segment's
+// audio clip — a REST request is stateless, so this is how POST
+// /api/phrases finds its way back to the right live TranscriptionSession
+// (and the right one specifically: segmentId alone isn't globally unique
+// across concurrent sessions, only within one).
+const activeSessionsById = new Map();
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || "pl";
@@ -44,6 +52,7 @@ const PRICING_USD_PER_1M = {
 
 const app = express();
 app.use(express.static("public"));
+app.use("/clips", express.static(CLIPS_DIR));
 app.use(express.json());
 
 // The Chrome extension's content script calls these endpoints from whatever
@@ -99,12 +108,30 @@ app.post("/api/phrases", (req, res) => {
     pronunciation,
     sourceLabel,
     sourceUrl,
+    sessionId,
+    segmentId,
   } = req.body || {};
   if (!userId || !phrase || !translation) {
     return res.status(400).json({ error: "Brak wymaganych pol (userId, phrase, translation)." });
   }
+
+  const id = crypto.randomUUID();
+
+  // The audio clip (if any) was already extracted back when the sentence
+  // was transcribed — see captureClip() — because by now the live rolling
+  // buffer it came from has long since moved on. This just looks up what
+  // was captured then and, if present, writes it out as this phrase's clip.
+  const session = sessionId ? activeSessionsById.get(sessionId) : null;
+  const clip = session && segmentId != null ? session.segmentClips.get(segmentId) : null;
+  console.log(
+    `[SAVE PHRASE] phrase="${phrase}" sentence="${contextSentence || ""}" ` +
+      `sessionFound=${Boolean(session)} segmentId=${segmentId} ` +
+      `bufferAvailable=${clip?.bufferAvailable ?? false} clipDurationMs=${(clip?.clipDurationMs ?? 0).toFixed?.(0) ?? 0}`
+  );
+  if (clip) saveClip(id, clip.buffer, TARGET_SAMPLE_RATE);
+
   const saved = addPhrase({
-    id: crypto.randomUUID(),
+    id,
     userId,
     phrase,
     sourceLang: sourceLang || "",
@@ -116,6 +143,7 @@ app.post("/api/phrases", (req, res) => {
     pronunciation: pronunciation || "",
     sourceLabel: sourceLabel || "",
     sourceUrl: sourceUrl || "",
+    hasClip: Boolean(clip),
     capturedAt: Date.now(),
   });
   res.status(201).json(saved);
@@ -128,6 +156,7 @@ app.delete("/api/phrases/:id", (req, res) => {
   }
   const ok = deletePhrase(userId, req.params.id);
   if (!ok) return res.status(404).json({ error: "Nie znaleziono." });
+  deleteClip(req.params.id);
   res.status(204).end();
 });
 
@@ -271,6 +300,19 @@ class TranscriptionSession {
     this.closed = false;
     this.segmentCounter = 0;
     this.upstreamReady = false;
+    // Lets a "Zapamietaj" click (a separate, stateless REST request) find
+    // its way back to this session's audio clips — see activeSessionsById.
+    this.sessionId = crypto.randomUUID();
+    activeSessionsById.set(this.sessionId, this);
+    // Rolling buffer of the last ~15s of raw PCM16 audio actually sent to
+    // the ASR model, trimmed as new chunks arrive. Snapshotted into
+    // segmentClips whenever a sentence completes, so "Zapamietaj" can offer
+    // the real audio the phrase was heard in — not a re-download of the
+    // source video/track, just a short clip of audio already streaming
+    // through this server for the listener's own live session.
+    this.audioRing = [];
+    this.audioRingMs = 0;
+    this.segmentClips = new Map();
     // Audio the client sends before the OpenAI connection finishes its
     // handshake used to be silently dropped, which lost the first couple
     // seconds of a video that starts autoplaying the instant it's loaded.
@@ -361,7 +403,7 @@ class TranscriptionSession {
       this.pendingAudio = [];
 
       sendJson(this.clientWs, { type: "status", message: "polaczono z ASR" });
-      sendJson(this.clientWs, { type: "ready" });
+      sendJson(this.clientWs, { type: "ready", sessionId: this.sessionId });
 
       // With turn_detection disabled above, this is now the ONLY thing
       // deciding when audio gets committed for transcription — our own
@@ -550,6 +592,54 @@ class TranscriptionSession {
       const segmentId = ++this.segmentCounter;
       sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
       this.translate(trimmed, segmentId);
+      this.captureClip(segmentId, trimmed);
+    }
+  }
+
+  /**
+   * Slices the rolling audio ring down to the window this sentence was
+   * actually heard in, instead of grabbing whatever's in the ring at this
+   * instant — approximated from when its text started arriving
+   * (textBufferStartedAt, set right before this batch's delta loop) to now,
+   * padded with a margin on each side. The margin is asymmetric: delta
+   * timing lags true speech onset more than it lags the end (our custom
+   * commit timer can batch up to 6s of audio before OpenAI even starts
+   * transcribing it), so the "before" side needs more slack or early words
+   * get clipped off. This is a real approximation, not a sample-accurate
+   * cut — the [CLIP CAPTURE] log below exists specifically so we can look
+   * at real sessions and see whether it's actually landing on the right
+   * audio before trusting it further.
+   */
+  captureClip(segmentId, text) {
+    const CLIP_MARGIN_BEFORE_MS = 4000;
+    const CLIP_MARGIN_AFTER_MS = 2000;
+    const MAX_CLIP_SEGMENTS = 80;
+
+    const now = Date.now();
+    const textStartAt = this.textBufferStartedAt || now;
+    const windowStart = textStartAt - CLIP_MARGIN_BEFORE_MS;
+    const windowEnd = now + CLIP_MARGIN_AFTER_MS;
+
+    const chunksInWindow = this.audioRing.filter((c) => c.ts >= windowStart && c.ts <= windowEnd);
+    const oldestInRing = this.audioRing[0]?.ts ?? null;
+    // "Available" means the ring actually reached back far enough to cover
+    // the window's start, not just that we found SOME audio — a partial
+    // clip that's silently missing its first two seconds is exactly the
+    // bad-sync failure mode we're trying to catch, not paper over.
+    const bufferAvailable = oldestInRing !== null && oldestInRing <= windowStart + 500;
+    const clipBuffer = chunksInWindow.length ? Buffer.concat(chunksInWindow.map((c) => c.buf)) : null;
+    const clipDurationMs = clipBuffer ? (clipBuffer.length / 2 / TARGET_SAMPLE_RATE) * 1000 : 0;
+
+    console.log(
+      `[CLIP CAPTURE] segment=${segmentId} text="${text}" ` +
+        `windowStart=${new Date(windowStart).toISOString()} windowEnd=${new Date(windowEnd).toISOString()} ` +
+        `bufferAvailable=${bufferAvailable} clipDurationMs=${clipDurationMs.toFixed(0)} chunks=${chunksInWindow.length}`
+    );
+
+    if (!clipBuffer) return;
+    this.segmentClips.set(segmentId, { buffer: clipBuffer, windowStart, windowEnd, bufferAvailable, clipDurationMs });
+    if (this.segmentClips.size > MAX_CLIP_SEGMENTS) {
+      this.segmentClips.delete(this.segmentClips.keys().next().value);
     }
   }
 
@@ -592,12 +682,27 @@ class TranscriptionSession {
     const SILENCE_THRESHOLD = 150;
     if (this.recentAmplitude < SILENCE_THRESHOLD) return;
 
+    const rawBuffer = Buffer.from(base64Audio, "base64");
+
     // TEMPORARY: total real speech audio actually forwarded to the ASR
     // model (silence already excluded above) — the other half of the
     // [USAGE] measurement, since OpenAI's own usage counters are priced per
     // audio token, not per second, and we want the $/minute conversion.
-    const audioBytes = Buffer.from(base64Audio, "base64").length;
-    this.sentAudioMs += (audioBytes / 2 / TARGET_SAMPLE_RATE) * 1000;
+    const chunkMs = (rawBuffer.length / 2 / TARGET_SAMPLE_RATE) * 1000;
+    this.sentAudioMs += chunkMs;
+
+    // Rolling window for clip extraction (see emitSentence) — timestamped
+    // per chunk so a clip can be sliced to the actual window a sentence was
+    // heard in, not just "whatever's in the buffer right now". Only real
+    // speech needs to go in here, which the silence check above already
+    // guarantees, so clips don't end up mostly dead air.
+    const MAX_RING_MS = 20000;
+    this.audioRing.push({ ts: Date.now(), buf: rawBuffer });
+    this.audioRingMs += chunkMs;
+    while (this.audioRingMs > MAX_RING_MS && this.audioRing.length > 1) {
+      const dropped = this.audioRing.shift();
+      this.audioRingMs -= (dropped.buf.length / 2 / TARGET_SAMPLE_RATE) * 1000;
+    }
 
     if (this.upstreamReady && this.upstream?.readyState === WebSocket.OPEN) {
       this.upstream.send(
@@ -703,6 +808,11 @@ class TranscriptionSession {
     if (this.upstream && this.upstream.readyState === WebSocket.OPEN) {
       this.upstream.close();
     }
+
+    // Delayed, not immediate - the user can still be reading the last few
+    // lines and clicking "Zapamietaj" on them for a bit after Stop, and
+    // that save needs this session's segmentClips to still be reachable.
+    setTimeout(() => activeSessionsById.delete(this.sessionId), 3 * 60 * 1000);
 
     // Final flush so a manually-stopped session's last partial minute still
     // counts — the 30s periodic flush above only catches whole intervals.
