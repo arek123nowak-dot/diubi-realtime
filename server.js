@@ -7,6 +7,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 const { listPhrases, addPhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
 const { CLIPS_DIR, saveClip, deleteClip } = require("./clips");
+const { listContent, upsertContent } = require("./history");
 
 // Looked up by sessionId when a "Zapamietaj" click needs that segment's
 // audio clip — a REST request is stateless, so this is how POST
@@ -111,6 +112,11 @@ app.post("/api/phrases", (req, res) => {
     sourceUrl,
     sessionId,
     segmentId,
+    contentId,
+    contentSource,
+    contentUrl,
+    contentTitle,
+    contentThumbnail,
   } = req.body || {};
   if (!userId || !phrase || !translation) {
     return res.status(400).json({ error: "Brak wymaganych pol (userId, phrase, translation)." });
@@ -148,7 +154,29 @@ app.post("/api/phrases", (req, res) => {
     hasClip: Boolean(clip),
     capturedAt: Date.now(),
   });
+
+  // Automatic, not a separate "add to history" action anywhere in the UI —
+  // whatever content a saved phrase came from is, by definition, something
+  // worth remembering as "recently learned from".
+  if (contentId) {
+    upsertContent(userId, {
+      contentId,
+      source: contentSource,
+      url: contentUrl,
+      title: contentTitle,
+      thumbnail: contentThumbnail,
+    });
+  }
+
   res.status(201).json(saved);
+});
+
+app.get("/api/content", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  res.json(listContent(userId));
 });
 
 app.delete("/api/phrases/:id", (req, res) => {

@@ -10,6 +10,7 @@ const loadSourceBtn = document.getElementById("loadSourceBtn");
 const playerWrap = document.getElementById("playerWrap");
 const notebookBtn = document.getElementById("notebookBtn");
 const powtorkaBtn = document.getElementById("powtorkaBtn");
+const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const spotifyHint = document.getElementById("spotifyHint");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
@@ -52,6 +53,10 @@ function wireClipAudio(audioEl) {
 const rows = new Map();
 
 let selectedPlatform = null;
+// The currently loaded source's identity, for auto-recording "Moja nauka"
+// history on the next saved phrase - never a user-facing action, just
+// metadata riding along with whatever gets saved anyway (see saveToNotebook).
+let currentContent = null;
 
 // Plain "Start" (no source loaded through the picker above) is the manual
 // two-tab flow: the user already has the audio playing in some other tab,
@@ -99,6 +104,15 @@ function loadSource() {
     playerWrap.innerHTML = '<div id="ytTarget"></div>';
     playerWrap.className = "player-wrap visible ratio-video";
     playerPlatform = "youtube";
+    // Title fills in once the player reports it (setupYouTubePlayer's
+    // onReady) - not available yet at this point.
+    currentContent = {
+      contentId: videoId,
+      source: "youtube",
+      url,
+      title: "",
+      thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+    };
     // Fire-and-forget: loading the YouTube API script is async, but it must
     // NOT be awaited before calling start() below, or the click that
     // triggered this handler stops counting as a "user gesture" by the time
@@ -119,6 +133,13 @@ function loadSource() {
     playerWrap.className = "player-wrap visible ratio-audio";
     playerIframe = iframe;
     playerPlatform = "spotify";
+    // No way to pull Spotify's real episode title from the plain embed
+    // widget without their Web API (OAuth) - "Spotify" is an honest
+    // placeholder for v1, not a bug to chase down right now.
+    const spotifyMatch = url.match(/open\.spotify\.com\/(?:intl-\w+\/)?(episode|show|track)\/([a-zA-Z0-9]+)/);
+    currentContent = spotifyMatch
+      ? { contentId: `spotify:${spotifyMatch[2]}`, source: "spotify", url, title: "Spotify", thumbnail: "" }
+      : null;
   }
 
   // Still synchronous within this click handler (see note above).
@@ -170,6 +191,8 @@ async function setupYouTubePlayer(videoId, originalUrl) {
       // loading, start it now instead of waiting on a "ready" message that
       // already came and went.
       onReady: () => {
+        const data = ytPlayer.getVideoData?.();
+        if (data?.title && currentContent?.contentId === videoId) currentContent.title = data.title;
         if (captureReady) ytPlayer.playVideo();
       },
       onError: (e) => handleYouTubeError(e.data, originalUrl),
@@ -724,6 +747,11 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId, s
       sourceUrl,
       sessionId: currentSessionId,
       segmentId,
+      contentId: currentContent?.contentId || "",
+      contentSource: currentContent?.source || "",
+      contentUrl: currentContent?.url || "",
+      contentTitle: currentContent?.title || "",
+      contentThumbnail: currentContent?.thumbnail || "",
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -815,6 +843,95 @@ function renderNotebook(card, phrases) {
 function formatDate(ms) {
   if (!ms) return "";
   return new Date(ms).toLocaleDateString("pl-PL", { day: "numeric", month: "short" });
+}
+
+/** "dzisiaj" / "wczoraj" / "X dni temu" instead of a bare date - this view is
+ * about picking up where you left off, so how recently matters more than
+ * the exact calendar date. */
+function formatRelativeDate(ms) {
+  if (!ms) return "";
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  if (days <= 0) return "dzisiaj";
+  if (days === 1) return "wczoraj";
+  if (days < 7) return `${days} dni temu`;
+  return formatDate(ms);
+}
+
+// ---------------------------------------------------------------------------
+// Moja nauka: automatic "recently learned from" history - one entry per
+// source, auto-recorded whenever a phrase gets saved from it (see
+// saveToNotebook/currentContent), never a dedicated "add to history" action.
+// Just a way back in, not a tracker: no watch progress, no streaks.
+// ---------------------------------------------------------------------------
+
+mojaNaukaBtn.addEventListener("click", openMojaNauka);
+
+async function openMojaNauka() {
+  const overlay = openModal(`<h2>📚 Moja nauka</h2><p class="loading">Wczytuje...</p>`);
+  const card = overlay.querySelector(".modal-card");
+
+  let items;
+  try {
+    const res = await fetch(`/api/content?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    items = await res.json();
+  } catch (err) {
+    card.innerHTML = `<h2>📚 Moja nauka</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  renderMojaNauka(card, items);
+}
+
+function renderMojaNauka(card, items) {
+  if (items.length === 0) {
+    card.innerHTML = `
+      <h2>📚 Moja nauka</h2>
+      <p class="notebook-empty">Jeszcze nic tu nie masz. Wroc tutaj, gdy zapiszesz pierwsza fraze z jakiegos zrodla.</p>
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `;
+    card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+    return;
+  }
+
+  const itemsHtml = items
+    .map(
+      (it, i) => `
+      <div class="content-item" data-index="${i}">
+        ${it.thumbnail ? `<img class="ci-thumb" src="${escapeHtml(it.thumbnail)}" alt="" />` : `<div class="ci-thumb"></div>`}
+        <div class="ci-info">
+          <div class="ci-title">${escapeHtml(it.title || (it.source === "spotify" ? "Spotify" : "YouTube"))}</div>
+          <div class="ci-meta">Ostatnio: ${formatRelativeDate(it.lastOpenedAt)} · ${it.savedPhrasesCount} zapisanych ${it.savedPhrasesCount === 1 ? "zwrotu" : "zwrotow"}</div>
+        </div>
+        <button class="ci-continue">▶ Kontynuuj</button>
+      </div>`
+    )
+    .join("");
+
+  card.innerHTML = `
+    <h2>📚 Moja nauka</h2>
+    <div class="content-list">${itemsHtml}</div>
+    <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelectorAll(".ci-continue").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const item = items[Number(btn.closest(".content-item").dataset.index)];
+      card.closest(".modal-overlay").remove();
+      continueContent(item);
+    });
+  });
+}
+
+/** Resumes a past source through the same loadSource() path a fresh link
+ * paste would take - not a separate "resume" code path that could drift out
+ * of sync with the real one. */
+function continueContent(item) {
+  if (!item.url) return;
+  selectedPlatform = item.source;
+  sourceUrlInput.value = item.url;
+  loadSource();
 }
 
 // ---------------------------------------------------------------------------
