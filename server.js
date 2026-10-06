@@ -8,6 +8,7 @@ const { listPhrases, addPhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
 const { CLIPS_DIR, saveClip, deleteClip } = require("./clips");
 const { listContent, upsertContent } = require("./history");
+const { getYouTubeCaptions } = require("./youtubeCaptions");
 
 // Looked up by sessionId when a "Zapamietaj" click needs that segment's
 // audio clip — a REST request is stateless, so this is how POST
@@ -117,6 +118,7 @@ app.post("/api/phrases", (req, res) => {
     contentUrl,
     contentTitle,
     contentThumbnail,
+    sourceTimestampSec,
   } = req.body || {};
   if (!userId || !phrase || !translation) {
     return res.status(400).json({ error: "Brak wymaganych pol (userId, phrase, translation)." });
@@ -152,6 +154,10 @@ app.post("/api/phrases", (req, res) => {
     sourceLabel: sourceLabel || "",
     sourceUrl: sourceUrl || "",
     contentId: contentId || "",
+    // Only meaningful when there's no audio clip (captions-sync mode has no
+    // live audio to snip from) - lets the saved phrase still link back to
+    // the exact moment in the source video instead of nothing at all.
+    sourceTimestampSec: typeof sourceTimestampSec === "number" ? sourceTimestampSec : null,
     hasClip: Boolean(clip),
     capturedAt: Date.now(),
   });
@@ -244,6 +250,122 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
     pronunciation: parsed.pronunciation || "",
   };
 }
+
+/** Translates one batch (<=25 sentences) in a single non-streaming call,
+ * asking for a JSON array back in the same order - far cheaper than one
+ * call per caption cue for a whole video. Defensively padded/truncated in
+ * case the model drops or adds an entry despite the instruction. */
+async function translateBatchChunk(sentences, sourceLang, targetLang) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: TRANSLATION_MODEL,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `Jestes tlumaczem napisow. Dostajesz tablice zdan w formacie JSON${
+              sourceLang ? ` (jezyk: ${sourceLang})` : ""
+            }. Przetlumacz KAZDE zdanie osobno na jezyk ${targetLang}, zachowujac dokladnie ta sama ` +
+            `kolejnosc i liczbe elementow. Odpowiedz WYLACZNIE czystym obiektem JSON postaci ` +
+            `{"translations": ["...", "...", ...]} - bez komentarzy, bez markdown.`,
+        },
+        { role: "user", content: JSON.stringify(sentences) },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "{}";
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    parsed = {};
+  }
+  const translations = Array.isArray(parsed.translations) ? parsed.translations.slice(0, sentences.length) : [];
+  while (translations.length < sentences.length) translations.push("");
+  return translations;
+}
+
+/** Splits `sentences` into batches and translates a few in parallel - fast
+ * enough that fetching+translating a whole video's captions up front (the
+ * point: zero lag once playback starts) stays within a few seconds for a
+ * typical video instead of one request per cue. */
+async function translateBatch(sentences, sourceLang, targetLang) {
+  const BATCH_SIZE = 25;
+  const CONCURRENCY = 3;
+  const batches = [];
+  for (let i = 0; i < sentences.length; i += BATCH_SIZE) batches.push(sentences.slice(i, i + BATCH_SIZE));
+
+  const results = new Array(sentences.length);
+  let nextBatch = 0;
+  async function worker() {
+    while (nextBatch < batches.length) {
+      const batchIndex = nextBatch++;
+      const translations = await translateBatchChunk(batches[batchIndex], sourceLang, targetLang);
+      const offset = batchIndex * BATCH_SIZE;
+      translations.forEach((t, i) => {
+        results[offset + i] = t;
+      });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
+  return results;
+}
+
+/**
+ * YouTube's own caption track, translated up front - when available, this
+ * replaces the live-ASR path entirely for that video: perfectly synced to
+ * the real video timestamps (no commit-timing lag) and not our own model's
+ * mishearing of fast/accented speech. `available: false` (never an error
+ * response) is the normal "no captions for this video" case - the client
+ * falls back to live listening exactly as before.
+ */
+app.get("/api/youtube-captions", async (req, res) => {
+  const videoId = req.query.videoId;
+  const targetLang = (req.query.targetLang || DEFAULT_TARGET_LANG).toString();
+  if (!videoId || typeof videoId !== "string") {
+    return res.status(400).json({ error: "Brak videoId." });
+  }
+
+  try {
+    const captions = await getYouTubeCaptions(videoId);
+    if (!captions.available || captions.segments.length === 0) {
+      return res.json({ available: false });
+    }
+
+    const texts = captions.segments.map((s) => s.text);
+    const translations = await translateBatch(texts, captions.sourceLang, targetLang);
+
+    console.log(`[YT CAPTIONS] videoId=${videoId} segments=${captions.segments.length} sourceLang=${captions.sourceLang || "?"}`);
+
+    res.json({
+      available: true,
+      sourceLang: captions.sourceLang,
+      segments: captions.segments.map((s, i) => ({
+        start: s.start,
+        end: s.end,
+        text: s.text,
+        translation: translations[i] || "",
+      })),
+    });
+  } catch (err) {
+    console.log(`[YT CAPTIONS] failed for videoId=${videoId}: ${err.message}`);
+    res.json({ available: false });
+  }
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/stream" });

@@ -310,6 +310,15 @@
   }
   .modal-card .field-value { font-size: 0.98rem; line-height: 1.45; }
   .clip-player { width: 100%; height: 34px; margin-top: 4px; }
+  .clip-timestamp-link {
+    display: inline-block;
+    margin-top: 4px;
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .clip-timestamp-link:hover { text-decoration: underline; }
 
   .review-progress { float: right; font-size: 0.75rem; color: var(--muted); font-weight: 400; }
   .review-prompt { color: var(--muted); font-size: 0.8rem; margin: 16px 0 2px; }
@@ -387,6 +396,19 @@
   }
   .back-to-start-btn:hover { border-color: var(--accent); color: var(--text); }
   body.compact .back-to-start-btn { display: inline-block; }
+
+  .fallback-start-btn {
+    display: none;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin: 4px 0 10px;
+  }
+  .fallback-start-btn.visible { display: inline-block; }
   .content-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
   .content-item {
     border: 1px solid var(--border);
@@ -535,6 +557,7 @@
     <button id="powtorkaBtn">🔁 Powtórka</button>
     <button id="mojaNaukaBtn">📚 Moja nauka</button>
   </div>
+  <button id="fallbackStartBtn" class="fallback-start-btn">▶ Uruchom nasluch audio (brak napisow do tego filmu)</button>
   <div id="status"></div>
 
   <div class="reel-wrap">

@@ -14,6 +14,7 @@ const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const backToStartBtn = document.getElementById("backToStartBtn");
 const returnCard = document.getElementById("returnCard");
 const spotifyHint = document.getElementById("spotifyHint");
+const fallbackStartBtn = document.getElementById("fallbackStartBtn");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -65,11 +66,27 @@ let selectedPlatform = null;
 // metadata riding along with whatever gets saved anyway (see saveToNotebook).
 let currentContent = null;
 
+// YouTube captions-sync mode: when the video has official/auto captions,
+// we skip live ASR entirely (no tab-audio permission prompt, no
+// transcription lag/mishearing) and instead reveal pre-translated segments
+// as ytPlayer's own playback clock reaches each one's start time.
+let captionsActive = false;
+let captionSegments = [];
+let captionRevealIndex = 0;
+let captionsPollTimer = null;
+
 // Plain "Start" (no source loaded through the picker above) is the manual
 // two-tab flow: the user already has the audio playing in some other tab,
 // so the normal picker — not a preference for this tab — is what they need.
 startBtn.addEventListener("click", () => start({ preferCurrentTab: false }));
 stopBtn.addEventListener("click", stop);
+// Manual fallback for a YouTube video with no captions - a fresh click here
+// is its own user gesture, so getDisplayMedia (via start()) works fine even
+// though the captions check that revealed this button was itself async.
+fallbackStartBtn.addEventListener("click", () => {
+  fallbackStartBtn.classList.remove("visible");
+  start();
+});
 loadSourceBtn.addEventListener("click", loadSource);
 sourceUrlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadSource();
@@ -100,6 +117,11 @@ function loadSource() {
   const url = sourceUrlInput.value.trim();
   if (!url || !selectedPlatform) return;
 
+  // Guards against a stale captions poll timer (from a previously loaded
+  // video) running against whatever gets loaded next - reachable via
+  // Moja nauka's Kontynuuj while a source is already active, not just via
+  // the empty picker.
+  stopCaptionsPlayback();
   collapseSourcePicker();
 
   if (selectedPlatform === "youtube") {
@@ -120,11 +142,16 @@ function loadSource() {
       title: "",
       thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
     };
-    // Fire-and-forget: loading the YouTube API script is async, but it must
-    // NOT be awaited before calling start() below, or the click that
-    // triggered this handler stops counting as a "user gesture" by the time
-    // we get there and getDisplayMedia gets silently rejected.
+    // Fire-and-forget: loading the YouTube API script is async, and must not
+    // be awaited here — same reasoning as the captions check below.
     setupYouTubePlayer(videoId, url);
+    // Also fire-and-forget: whether this video has official captions decides
+    // which path we take (skip live ASR entirely, or fall back to it), but
+    // that decision can't block this click handler without losing the user
+    // gesture getDisplayMedia needs for the fallback case. See
+    // beginYouTubeCaptionsCheck/showNoCaptionsFallback.
+    beginYouTubeCaptionsCheck(videoId);
+    return;
   } else {
     const embedSrc = buildSpotifyEmbed(url);
     if (!embedSrc) {
@@ -171,6 +198,7 @@ backToStartBtn.addEventListener("click", resetToStart);
  * gave people a reason to land on a source they then want to back out of. */
 function resetToStart() {
   stop();
+  stopCaptionsPlayback();
   stopAllTracks();
   if (ytPlayer && typeof ytPlayer.destroy === "function") ytPlayer.destroy();
   ytPlayer = null;
@@ -251,6 +279,11 @@ async function setupYouTubePlayer(videoId, originalUrl) {
  * explaining required: one button, one click, done.
  */
 function handleYouTubeError(code, originalUrl) {
+  // An embed that can't play here can't report a playback clock either, so
+  // captions-sync mode (which reveals segments by polling that clock) has
+  // nothing to sync to - same live-ASR-via-external-tab fallback as before,
+  // regardless of whether this video happened to have captions.
+  stopCaptionsPlayback();
   if (code === 101 || code === 150) {
     showEmbedBlockedFallback(originalUrl);
   } else if (code === 100) {
@@ -258,6 +291,105 @@ function handleYouTubeError(code, originalUrl) {
   } else {
     setStatus("Nie udalo sie zaladowac filmu z YouTube.", true);
   }
+}
+
+// ---------------------------------------------------------------------------
+// YouTube captions-sync mode: when captionsActive, there is no live ASR
+// session at all (no getDisplayMedia prompt, no /stream WebSocket) - the
+// whole video's captions were fetched and translated up front (see
+// beginYouTubeCaptionsCheck), and this just reveals them in step with
+// ytPlayer's own playback position. Falls back to the normal live-listening
+// flow (via fallbackStartBtn) whenever a video has no captions to use.
+// ---------------------------------------------------------------------------
+
+async function beginYouTubeCaptionsCheck(videoId) {
+  setStatus("Sprawdzam, czy YouTube ma napisy do tego filmu...");
+  const target = targetLangInput.value.trim() || "pl";
+
+  let data;
+  try {
+    const res = await fetch(
+      `/api/youtube-captions?videoId=${encodeURIComponent(videoId)}&targetLang=${encodeURIComponent(target)}`
+    );
+    data = await res.json();
+  } catch {
+    data = { available: false };
+  }
+
+  // Stale guard: the user may have backed out (resetToStart) or loaded a
+  // different source while this was in flight.
+  if (currentContent?.contentId !== videoId) return;
+
+  if (data.available && Array.isArray(data.segments) && data.segments.length > 0) {
+    startCaptionsPlayback(data.segments);
+  } else {
+    showNoCaptionsFallback();
+  }
+}
+
+function showNoCaptionsFallback() {
+  // Informational, not an error - this is the expected path for most
+  // videos (not every video has captions), same tone as the getDisplayMedia
+  // instructions above, not the red "something broke" styling.
+  setStatus("Ten film nie ma napisow YouTube - kliknij ponizej, by uruchomic nasluch audio.");
+  fallbackStartBtn.classList.add("visible");
+}
+
+function startCaptionsPlayback(segments) {
+  captionsActive = true;
+  captionSegments = segments;
+  captionRevealIndex = 0;
+  rows.clear();
+  reelEl.innerHTML = "";
+  fallbackStartBtn.classList.remove("visible");
+  // Live ASR and captions-sync are mutually exclusive for one loaded source
+  // - disabled rather than left clickable to avoid both running at once.
+  startBtn.disabled = true;
+  setStatus("Napisy YouTube znalezione - tekst zsynchronizowany z filmem, bez nasluchu audio.");
+
+  waitForYtPlayerThenPlay();
+  captionsPollTimer = setInterval(pollCaptionPlayback, 250);
+}
+
+function waitForYtPlayerThenPlay() {
+  if (!captionsActive) return;
+  if (ytPlayer && typeof ytPlayer.playVideo === "function") {
+    ytPlayer.playVideo();
+    return;
+  }
+  setTimeout(waitForYtPlayerThenPlay, 150);
+}
+
+function pollCaptionPlayback() {
+  if (!captionsActive || !ytPlayer || typeof ytPlayer.getCurrentTime !== "function") return;
+  const t = ytPlayer.getCurrentTime();
+  while (captionRevealIndex < captionSegments.length && captionSegments[captionRevealIndex].start <= t) {
+    revealCaptionSegment(captionSegments[captionRevealIndex], captionRevealIndex);
+    captionRevealIndex++;
+  }
+}
+
+function revealCaptionSegment(segment, index) {
+  // Plain numeric id, same as the live-ASR path's segmentId - the reel
+  // click handler does Number(cell.dataset.segmentId), so this has to stay
+  // a number too, not a prefixed string.
+  const row = getOrCreateRow(index);
+  renderClickableWords(row.originalCell, segment.text);
+  row.originalCell.dataset.segmentId = index;
+  row.translationCell.textContent = segment.translation;
+  scrollToBottom();
+  pruneOldRows();
+}
+
+function stopCaptionsPlayback() {
+  captionsActive = false;
+  captionSegments = [];
+  captionRevealIndex = 0;
+  if (captionsPollTimer) {
+    clearInterval(captionsPollTimer);
+    captionsPollTimer = null;
+  }
+  fallbackStartBtn.classList.remove("visible");
 }
 
 function showEmbedBlockedFallback(originalUrl) {
@@ -655,7 +787,11 @@ reelEl.addEventListener("click", (e) => {
   // translation pipeline already produced it, no reason to ask the AI to
   // translate the sentence a second time just for this card.
   const sentenceTranslation = cell.parentElement.querySelector(".cell.translation")?.textContent || "";
-  openExplainCard(phrase, cell.textContent, segmentId, sentenceTranslation);
+  // Captions-sync mode has no live audio to clip - the segment's own known
+  // start time becomes the fallback "jump to this moment" link instead.
+  const sourceTimestampSec =
+    captionsActive && captionSegments[segmentId] ? captionSegments[segmentId].start : null;
+  openExplainCard(phrase, cell.textContent, segmentId, sentenceTranslation, sourceTimestampSec);
 });
 
 function openModal(innerHtml) {
@@ -669,7 +805,7 @@ function openModal(innerHtml) {
   return overlay;
 }
 
-async function openExplainCard(phrase, contextSentence, segmentId, sentenceTranslation) {
+async function openExplainCard(phrase, contextSentence, segmentId, sentenceTranslation, sourceTimestampSec) {
   const overlay = openModal(`
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
@@ -717,7 +853,7 @@ async function openExplainCard(phrase, contextSentence, segmentId, sentenceTrans
     rememberBtn.disabled = true;
     rememberBtn.textContent = "Zapisywanie...";
     try {
-      await saveToNotebook(phrase, contextSentence, data, segmentId, sentenceTranslation);
+      await saveToNotebook(phrase, contextSentence, data, segmentId, sentenceTranslation, sourceTimestampSec);
       rememberBtn.textContent = "⭐ Zapisano";
     } catch {
       rememberBtn.disabled = false;
@@ -750,8 +886,25 @@ function phraseSrcTranslationHtml(sentenceTranslation) {
 }
 
 function clipPlayerHtml(p) {
-  if (!p.hasClip) return "";
-  return `<div class="field-label">Oryginalny fragment</div><audio class="clip-player" controls preload="none" src="/clips/${p.id}.wav"></audio>`;
+  if (p.hasClip) {
+    return `<div class="field-label">Oryginalny fragment</div><audio class="clip-player" controls preload="none" src="/clips/${p.id}.wav"></audio>`;
+  }
+  // Captions-sync mode has no live audio to snip a clip from - the exact
+  // moment in the source video (known from the caption's own timestamp) is
+  // the next best thing: full context, real audio, just one click away
+  // instead of none at all.
+  if (typeof p.sourceTimestampSec === "number" && p.sourceUrl) {
+    const sec = Math.max(0, Math.floor(p.sourceTimestampSec));
+    const sep = p.sourceUrl.includes("?") ? "&" : "?";
+    const href = `${p.sourceUrl}${sep}t=${sec}s`;
+    const mm = Math.floor(sec / 60);
+    const ss = String(sec % 60).padStart(2, "0");
+    return (
+      `<div class="field-label">Moment w filmie</div>` +
+      `<a class="clip-timestamp-link" href="${escapeHtml(href)}" target="_blank" rel="noopener">▶ Otworz w filmie (${mm}:${ss})</a>`
+    );
+  }
+  return "";
 }
 
 /** Any <audio> this card renders needs to stop the live capture pipeline
@@ -777,7 +930,7 @@ function showSavedPhraseCard(p) {
   wireClipAudioElements(overlay);
 }
 
-async function saveToNotebook(phrase, contextSentence, explainData, segmentId, sentenceTranslation) {
+async function saveToNotebook(phrase, contextSentence, explainData, segmentId, sentenceTranslation, sourceTimestampSec) {
   const { sourceLabel, sourceUrl } = currentSourceMeta();
   const res = await fetch("/api/phrases", {
     method: "POST",
@@ -801,6 +954,7 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId, s
       contentUrl: currentContent?.url || "",
       contentTitle: currentContent?.title || "",
       contentThumbnail: currentContent?.thumbnail || "",
+      sourceTimestampSec: typeof sourceTimestampSec === "number" ? sourceTimestampSec : null,
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
