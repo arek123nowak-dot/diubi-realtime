@@ -423,12 +423,67 @@
     cursor: pointer;
     font-size: 0.85rem;
   }
+
+  .return-card {
+    display: none;
+    border: 1px solid var(--accent);
+    background: #1a2230;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+    gap: 14px;
+    align-items: center;
+  }
+  .return-card.visible { display: flex; }
+  .return-card .rc-thumb {
+    width: 72px;
+    height: 72px;
+    border-radius: 10px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: #2a2f3a;
+  }
+  .return-card .rc-info { flex: 1; min-width: 0; }
+  .return-card .rc-label {
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .return-card .rc-title {
+    font-weight: 700;
+    font-size: 1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .return-card .rc-meta { color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
+  .return-card .rc-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+  .return-card .rc-actions button {
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .return-card .rc-continue { background: var(--accent); color: white; }
+  .return-card .rc-review { background: #2a2f3a; color: var(--text); }
+  @media (max-width: 520px) {
+    .return-card { flex-wrap: wrap; }
+    .return-card .rc-actions { flex-direction: row; width: 100%; }
+    .return-card .rc-actions button { flex: 1; }
+  }
 </style>
 </head>
 <body>
   <h1><img class="logo" src="logo.png" alt="DIUBI" />DIUBI — Understand The World</h1>
   <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
   <button id="backToStartBtn" class="back-to-start-btn">← Wroc do wyboru zrodla</button>
+
+  <div class="return-card" id="returnCard"></div>
 
   <div class="source-bar">
     <button class="source-btn" data-platform="youtube"><span class="dot"></span>YouTube</button>

@@ -151,6 +151,7 @@ app.post("/api/phrases", (req, res) => {
     pronunciation: pronunciation || "",
     sourceLabel: sourceLabel || "",
     sourceUrl: sourceUrl || "",
+    contentId: contentId || "",
     hasClip: Boolean(clip),
     capturedAt: Date.now(),
   });

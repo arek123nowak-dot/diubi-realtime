@@ -12,6 +12,7 @@ const notebookBtn = document.getElementById("notebookBtn");
 const powtorkaBtn = document.getElementById("powtorkaBtn");
 const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const backToStartBtn = document.getElementById("backToStartBtn");
+const returnCard = document.getElementById("returnCard");
 const spotifyHint = document.getElementById("spotifyHint");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
@@ -158,6 +159,7 @@ function collapseSourcePicker() {
   document.querySelector(".source-bar").style.display = "none";
   sourceInputRow.style.display = "none";
   spotifyHint.style.display = "none";
+  returnCard.classList.remove("visible");
   document.body.classList.add("compact");
 }
 
@@ -194,6 +196,7 @@ function resetToStart() {
   rows.clear();
   reelEl.innerHTML = "";
   setStatus("");
+  initReturnCard();
 }
 
 function extractYouTubeId(url) {
@@ -981,6 +984,46 @@ function continueContent(item) {
 }
 
 // ---------------------------------------------------------------------------
+// "Wroc do nauki": the landing state, not a button you have to think to
+// click. If there's history, the most recent source is the first thing
+// shown - before the empty source picker - with a one-click way back in AND
+// a one-click way to test what actually stuck. This is the proactive half
+// of Moja nauka; the modal (above) is the full list for anything older than
+// "yesterday".
+// ---------------------------------------------------------------------------
+
+async function initReturnCard() {
+  let items;
+  try {
+    const res = await fetch(`/api/content?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    items = await res.json();
+  } catch {
+    return; // Silent - this is a convenience shortcut, not critical path; the normal picker is still right there.
+  }
+  if (!items || items.length === 0) return;
+
+  const item = items[0];
+  returnCard.innerHTML = `
+    ${item.thumbnail ? `<img class="rc-thumb" src="${escapeHtml(item.thumbnail)}" alt="" />` : `<div class="rc-thumb"></div>`}
+    <div class="rc-info">
+      <div class="rc-label">Wroc do nauki</div>
+      <div class="rc-title">${escapeHtml(item.title || (item.source === "spotify" ? "Spotify" : "YouTube"))}</div>
+      <div class="rc-meta">Ostatnio: ${formatRelativeDate(item.lastOpenedAt)} · ${item.savedPhrasesCount} zapisanych ${item.savedPhrasesCount === 1 ? "zwrotu" : "zwrotow"}</div>
+    </div>
+    <div class="rc-actions">
+      <button class="rc-continue">▶ Kontynuuj</button>
+      <button class="rc-review">🔁 Sprawdz, co pamietasz</button>
+    </div>
+  `;
+  returnCard.classList.add("visible");
+  returnCard.querySelector(".rc-continue").addEventListener("click", () => continueContent(item));
+  returnCard.querySelector(".rc-review").addEventListener("click", () => openReview({ contentId: item.contentId }));
+}
+
+initReturnCard();
+
+// ---------------------------------------------------------------------------
 // Powtorka: active recall, not a passive list. The phrase comes up first,
 // alone - you try to recall it yourself, THEN (optionally) hear the real
 // audio it came from, THEN see the answer. Recall-before-reveal is the
@@ -1002,7 +1045,8 @@ function shuffle(arr) {
   return a;
 }
 
-async function openReview() {
+async function openReview(options = {}) {
+  const { contentId } = options;
   const overlay = openModal(`<h2>🔁 Powtórka</h2><p class="loading">Wczytuje...</p>`);
   const card = overlay.querySelector(".modal-card");
 
@@ -1015,6 +1059,15 @@ async function openReview() {
     card.innerHTML = `<h2>🔁 Powtórka</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
     card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
     return;
+  }
+
+  // Scoped to one source (from the "Wroc do nauki" card) when asked - but
+  // fall back to the full set rather than show an empty review if nothing
+  // in that scope has a contentId yet (phrases saved before this field
+  // existed).
+  if (contentId) {
+    const scoped = phrases.filter((p) => p.contentId === contentId);
+    if (scoped.length > 0) phrases = scoped;
   }
 
   if (phrases.length === 0) {
