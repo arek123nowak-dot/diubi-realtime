@@ -2,27 +2,30 @@ const fs = require("fs");
 const path = require("path");
 
 // Same flat-JSON-file pattern as store.js/usage.js. One record per
-// (userId, contentId) - "Moja nauka" / recently-learned-from history,
-// updated automatically whenever a phrase gets saved from some source
-// (see server.js's POST /api/phrases), never through a dedicated action.
-// Deliberately minimal per the product decision behind this: no watch
-// history, no completion tracking, no accounts - just "what did I last
-// learn from, and how much have I saved from it."
+// (userId, contentId) - the user's content library: what they've engaged
+// with across sources, updated automatically whenever a phrase gets saved
+// from something (see server.js's POST /api/phrases), never through a
+// dedicated action. Deliberately minimal for now - no watch progress, no
+// completion tracking, no accounts - just "what did I last learn from, and
+// how much have I saved from it." Named (and kept separate from store.js's
+// phrases) as `content`, not `history`, on purpose: this is meant to grow
+// into the user's library of the world they're exploring with DIUBI, not a
+// log of pages visited.
 const DATA_DIR = path.join(__dirname, "data");
-const HISTORY_FILE = path.join(DATA_DIR, "content.json");
+const CONTENT_FILE = path.join(DATA_DIR, "content.json");
 
 function ensureStore() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(HISTORY_FILE)) fs.writeFileSync(HISTORY_FILE, "{}");
+  if (!fs.existsSync(CONTENT_FILE)) fs.writeFileSync(CONTENT_FILE, "{}");
 }
 
 function readAll() {
   ensureStore();
-  return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+  return JSON.parse(fs.readFileSync(CONTENT_FILE, "utf8"));
 }
 
 function writeAll(data) {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2));
+  fs.writeFileSync(CONTENT_FILE, JSON.stringify(data, null, 2));
 }
 
 function listContent(userId) {

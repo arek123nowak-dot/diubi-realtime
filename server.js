@@ -7,7 +7,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 const { listPhrases, addPhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
 const { CLIPS_DIR, saveClip, deleteClip } = require("./clips");
-const { listContent, upsertContent } = require("./history");
+const { listContent, upsertContent } = require("./userContent");
 const { getYouTubeCaptions } = require("./youtubeCaptions");
 
 // Looked up by sessionId when a "Zapamietaj" click needs that segment's
