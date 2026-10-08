@@ -24,6 +24,11 @@ const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
 const PORT = process.env.PORT || 3000;
+// How many trailing words of the previous item's transcript the overlap-
+// dedup comparison considers - generous for ~1s of speech at any
+// reasonable pace (OVERLAP_MS, in TranscriptionSession.start()), without
+// scanning the whole transcript on every delta.
+const OVERLAP_MAX_WORDS = 10;
 
 // Per-device (anonymous userId, same one used for the notebook) and
 // server-wide daily listening caps — the only realistic way to stop a
@@ -508,6 +513,19 @@ class TranscriptionSession {
     this.sinceLastCommitAt = Date.now();
     this.quietSinceMs = null;
 
+    // Audio-overlap dedup (see forceCommitTimer and the delta handler): each
+    // forced commit resends the tail of the just-committed audio as the
+    // start of the next buffer, so a word straddling the cut has full
+    // acoustic context on at least one side instead of being silently
+    // dropped by the ASR model. That means the new item's first words are a
+    // near-duplicate of the previous item's last words - this state tracks
+    // that boundary so the duplicate text gets stripped once, right at the
+    // seam, before it ever reaches textBuffer.
+    this.lastItemTranscript = ""; // full completed transcript of the most recently finished item
+    this.currentDeltaItemId = null; // item_id the delta handler is currently accumulating for
+    this.dedupResolved = true; // false while still waiting to see if the current item's start duplicates the previous item's end
+    this.pendingDedupRaw = ""; // raw (undeduped) delta text accumulated for the current item while dedupResolved is false
+
     // TEMPORARY cost-measurement instrumentation (see [USAGE] log lines) —
     // lets a short real-world test session convert directly into an actual
     // $/minute figure instead of an estimate. Safe to remove once that
@@ -589,6 +607,16 @@ class TranscriptionSession {
       const MAX_CHUNK_MS = 6000;
       const QUIET_AMPLITUDE = 500; // out of 32767 (Int16 full scale)
       const QUIET_HOLD_MS = 450; // matches the old server_vad silence_duration_ms
+      // Each forced (non-pause) commit lands at an essentially arbitrary
+      // point in continuous speech - confirmed in a real test session: the
+      // word exactly on the cut ("other," between "...with each" | "other,
+      // secretly hacking...") was missing from BOTH chunks' transcripts,
+      // because each chunk is transcribed independently with zero acoustic
+      // context from the other side of the cut. Resending this much of the
+      // just-committed audio again as the start of the next buffer gives
+      // that boundary word full context in at least one chunk. See the
+      // dedup logic in the delta handler for the text-side half of this.
+      const OVERLAP_MS = 1000;
 
       this.forceCommitTimer = setInterval(() => {
         if (!this.hasUncommittedAudio || !this.upstreamReady || this.upstream?.readyState !== WebSocket.OPEN) return;
@@ -613,8 +641,33 @@ class TranscriptionSession {
         // becomes until the matching input_audio_buffer.committed event
         // comes back (handleUpstreamEvent), in the same order we sent commits.
         this.pendingCommitWindows.push({ start: this.sinceLastCommitAt, end: now });
-        this.hasUncommittedAudio = false;
-        this.sinceLastCommitAt = now;
+        const previousWindow = { start: this.sinceLastCommitAt, end: now };
+
+        // Re-append the tail of what we just committed - OpenAI clears its
+        // buffer on commit, so without this the next item would start from
+        // true silence with no memory of the audio right before the cut.
+        const overlapStart = Math.max(previousWindow.start, now - OVERLAP_MS);
+        const overlapChunks = this.audioRing.filter((c) => c.ts >= overlapStart && c.ts <= now);
+        let overlapMs = 0;
+        if (overlapChunks.length) {
+          const overlapBuffer = Buffer.concat(overlapChunks.map((c) => c.buf));
+          overlapMs = (overlapBuffer.length / 2 / TARGET_SAMPLE_RATE) * 1000;
+          this.upstream.send(
+            JSON.stringify({ type: "input_audio_buffer.append", audio: overlapBuffer.toString("base64") })
+          );
+        }
+        console.log(
+          `[ASR OVERLAP] previousWindow=${new Date(previousWindow.start).toISOString()}..${new Date(previousWindow.end).toISOString()} ` +
+            `overlapMs=${overlapMs.toFixed(0)} newWindow=${new Date(overlapStart).toISOString()}..${new Date(now).toISOString()}`
+        );
+
+        // The new buffer already contains overlapMs of (re-sent) audio, so
+        // the next chunk's "how much has accumulated" clock has to start
+        // from there, not from now - otherwise MAX_CHUNK_MS would measure
+        // only NEW capture time and each chunk would end up overlapMs
+        // longer than intended.
+        this.hasUncommittedAudio = overlapChunks.length > 0;
+        this.sinceLastCommitAt = overlapStart;
         this.quietSinceMs = null;
       }, 200);
 
@@ -705,42 +758,75 @@ class TranscriptionSession {
         sendJson(this.clientWs, { type: "transcript_delta", text: event.delta || "" });
         this.lastDeltaAt = Date.now();
 
-        // Accumulated ACROSS committed chunks on purpose: a forced 5s
-        // commit (see the timer above) can land mid-sentence, and we'd
-        // rather wait for the words still to come than translate a
-        // fragment. Only a run of sentence-ending punctuation actually
-        // drains the buffer.
-        if (!this.textBuffer) {
-          this.textBufferStartedAt = Date.now();
-          this.textBufferStartItemId = event.item_id || null;
+        // Audio overlap (see forceCommitTimer/OVERLAP_MS) means a NEW
+        // item's first words are a near-duplicate of the previous item's
+        // last words - resolve (and strip) that duplicate once, right at
+        // the seam, before anything from this item reaches textBuffer.
+        if (event.item_id && event.item_id !== this.currentDeltaItemId) {
+          this.currentDeltaItemId = event.item_id;
+          this.dedupResolved = false;
+          this.pendingDedupRaw = "";
         }
-        this.textBuffer += event.delta || "";
-        const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
-        for (const sentence of sentences) {
-          // event.item_id here is whatever commit's audio produced the
-          // delta that just completed this sentence - the real end-of-
-          // speech anchor for the clip, same idea as textBufferStartItemId
-          // for the start (see captureClip).
-          this.emitSentence(sentence, event.item_id);
+
+        if (!this.dedupResolved) {
+          this.pendingDedupRaw += event.delta || "";
+          const result = tryResolveOverlap(this.pendingDedupRaw, this.lastItemTranscript, OVERLAP_MAX_WORDS);
+          if (result.resolved) {
+            this.dedupResolved = true;
+            if (result.removedText) {
+              console.log(
+                `[ASR DEDUP] previous="${tailWords(this.lastItemTranscript, OVERLAP_MAX_WORDS)}" ` +
+                  `current="${this.pendingDedupRaw}" removed="${result.removedText}"`
+              );
+            }
+            this.feedSentenceText(result.remainder, event.item_id);
+          }
+          // Not resolved yet: wait for more deltas before emitting anything
+          // from this item - see completed handler for the force-resolve
+          // fallback on a very short item that never accumulates enough
+          // words to resolve here.
+          break;
         }
-        this.textBuffer = remainder;
-        if (!this.textBuffer) {
-          this.textBufferStartedAt = null;
-          this.textBufferStartItemId = null;
-        }
+
+        this.feedSentenceText(event.delta || "", event.item_id);
         break;
       }
 
       case "conversation.item.input_audio_transcription.completed":
-        // No per-item flush here anymore — a completed turn (natural VAD
+        if (event.item_id === this.currentDeltaItemId) {
+          // Edge case: a very short item whose total word count never
+          // reached OVERLAP_MAX_WORDS, so the delta handler never got to
+          // resolve dedup for it - force-resolve now (no more deltas for
+          // this item are coming), against the PREVIOUS item's transcript,
+          // before that gets overwritten below.
+          if (!this.dedupResolved) {
+            const result = tryResolveOverlap(this.pendingDedupRaw, this.lastItemTranscript, OVERLAP_MAX_WORDS, true);
+            this.dedupResolved = true;
+            if (result.removedText) {
+              console.log(
+                `[ASR DEDUP] previous="${tailWords(this.lastItemTranscript, OVERLAP_MAX_WORDS)}" ` +
+                  `current="${this.pendingDedupRaw}" removed="${result.removedText}" (forced at completion)`
+              );
+            }
+            this.feedSentenceText(result.remainder, event.item_id);
+          }
+          // The authoritative full text for this item - used as the overlap
+          // source for the NEXT item's dedup (more reliable than re-summing
+          // our own delta accumulation, which this mostly should match).
+          this.lastItemTranscript = event.transcript || this.pendingDedupRaw || this.lastItemTranscript;
+        }
+        // No per-item flush here otherwise — a completed turn (natural VAD
         // end OR a forced periodic commit) doesn't mean the current
         // sentence is actually finished. The idle-flush timer is what
         // eventually sends a trailing fragment if nothing follows it.
         break;
 
       case "input_audio_buffer.committed": {
-        this.hasUncommittedAudio = false;
-        this.sinceLastCommitAt = Date.now();
+        // hasUncommittedAudio/sinceLastCommitAt are NOT reset here anymore -
+        // forceCommitTimer (the only thing that ever sends a commit now
+        // that server_vad is disabled) already sets both correctly,
+        // including the overlap backdating. Resetting them again here, a
+        // moment later when this ack arrives, used to silently undo that.
         // Commits are acknowledged in the same order we sent them, so the
         // oldest queued window is always the one this event_id belongs to.
         const window = this.pendingCommitWindows.shift();
@@ -774,6 +860,31 @@ class TranscriptionSession {
       default:
         // Inne typy eventow (np. sygnaly VAD) na razie ignorujemy.
         break;
+    }
+  }
+
+  /** Feeds (already dedup-resolved) text into the cross-item sentence
+   * buffer and splits off any complete sentences - exactly the body the
+   * delta handler used to run directly on every delta, now shared between
+   * that normal path and the dedup-resolution path (which hands over a
+   * bigger first bite once the overlap boundary is found, then reverts to
+   * per-delta calls for the rest of the item). Logic itself is unchanged
+   * from before the overlap work. */
+  feedSentenceText(text, itemId) {
+    if (!text) return;
+    if (!this.textBuffer) {
+      this.textBufferStartedAt = Date.now();
+      this.textBufferStartItemId = itemId || null;
+    }
+    this.textBuffer += text;
+    const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
+    for (const sentence of sentences) {
+      this.emitSentence(sentence, itemId);
+    }
+    this.textBuffer = remainder;
+    if (!this.textBuffer) {
+      this.textBufferStartedAt = null;
+      this.textBufferStartItemId = null;
     }
   }
 
@@ -1088,6 +1199,88 @@ function splitCompleteSentences(text) {
     .map((s) => s.trim())
     .filter(Boolean);
   return { sentences, remainder };
+}
+
+/** Splits `text` into `{ word, start, end }` tokens on whitespace, keeping
+ * each word's character offsets - needed so a dedup match can be stripped
+ * from the ORIGINAL text (preserving its exact casing/punctuation/spacing)
+ * rather than reconstructed from a normalized copy. */
+function tokenizeWithPositions(text) {
+  const tokens = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(text))) {
+    tokens.push({ word: m[0], start: m.index, end: m.index + m[0].length });
+  }
+  return tokens;
+}
+
+/** Lowercases and strips punctuation for comparison only - "OpenAI's," and
+ * "openai s" should count as the same word when deciding whether the start
+ * of a new ASR chunk is a re-transcription of the overlap audio, not when
+ * deciding what text to actually keep. */
+function normalizeWordForCompare(word) {
+  return word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/** Returns the last `maxWords` words of `text`, for the [ASR DEDUP] log line. */
+function tailWords(text, maxWords) {
+  const words = (text || "").trim().split(/\s+/).filter(Boolean);
+  return words.slice(-maxWords).join(" ");
+}
+
+/**
+ * Finds and strips a duplicate overlap at the START of `pendingRaw` that
+ * matches the END of `previousTranscript` - the text-side half of the
+ * audio-overlap fix (see OVERLAP_MS in TranscriptionSession.start()):
+ * resending the tail of each committed chunk's audio as the start of the
+ * next one gives the model acoustic context for a word straddling the cut,
+ * but it also means the new chunk's first words are a re-transcription of
+ * words we already emitted from the previous chunk. This finds the longest
+ * prefix of the new (complete, whitespace-terminated) words that exactly
+ * matches a suffix of the previous transcript's last `maxOverlapWords`
+ * words, case/punctuation-insensitively, and reports that prefix as
+ * `removedText` - the remainder is everything after it, verbatim.
+ *
+ * Waits for more deltas (`resolved: false`) until either a match is found,
+ * enough words have arrived to rule one out, or `final` says no more
+ * deltas are coming for this item (end-of-item fallback).
+ */
+function tryResolveOverlap(pendingRaw, previousTranscript, maxOverlapWords, final = false) {
+  if (!previousTranscript || !previousTranscript.trim()) {
+    return { resolved: true, removedText: "", remainder: pendingRaw };
+  }
+
+  const tokens = tokenizeWithPositions(pendingRaw);
+  const endsWithBoundary = final || /\s$/.test(pendingRaw);
+  const completeCount = endsWithBoundary ? tokens.length : Math.max(0, tokens.length - 1);
+  if (completeCount <= 0) {
+    return final ? { resolved: true, removedText: "", remainder: pendingRaw } : { resolved: false };
+  }
+
+  const normPending = tokens.slice(0, completeCount).map((t) => normalizeWordForCompare(t.word));
+  const prevWords = previousTranscript.trim().split(/\s+/).filter(Boolean);
+  const tailNorm = prevWords.slice(-maxOverlapWords).map(normalizeWordForCompare);
+
+  let bestK = 0;
+  const maxK = Math.min(normPending.length, tailNorm.length);
+  for (let k = maxK; k >= 1; k--) {
+    const candidate = tailNorm.slice(tailNorm.length - k).join(" ");
+    const pendingSlice = normPending.slice(0, k).join(" ");
+    if (candidate && candidate === pendingSlice) {
+      bestK = k;
+      break;
+    }
+  }
+
+  if (bestK > 0) {
+    const cutEnd = tokens[bestK - 1].end;
+    return { resolved: true, removedText: pendingRaw.slice(0, cutEnd), remainder: pendingRaw.slice(cutEnd) };
+  }
+  if (final || completeCount >= maxOverlapWords) {
+    return { resolved: true, removedText: "", remainder: pendingRaw };
+  }
+  return { resolved: false };
 }
 
 const SCRIPT_RANGES = [
