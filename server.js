@@ -605,7 +605,7 @@ class TranscriptionSession {
       //     the previous commit doesn't immediately trigger another
       //     near-empty one
       const MIN_CHUNK_MS = 600;
-      const MAX_CHUNK_MS = 6000;
+      const MAX_CHUNK_MS = 3000; // TEMPORARY diagnostic value (was 6000) - see OVERLAP_MS below
       const QUIET_AMPLITUDE = 500; // out of 32767 (Int16 full scale)
       const QUIET_HOLD_MS = 450; // matches the old server_vad silence_duration_ms
       // Each forced (non-pause) commit lands at an essentially arbitrary
@@ -617,7 +617,11 @@ class TranscriptionSession {
       // just-committed audio again as the start of the next buffer gives
       // that boundary word full context in at least one chunk. See the
       // dedup logic in the delta handler for the text-side half of this.
-      const OVERLAP_MS = 2500;
+      // TEMPORARY diagnostic value (was 2500, paired with MAX_CHUNK_MS=6000) -
+      // dropped to 1000 together with the shorter MAX_CHUNK_MS above so this
+      // experiment isn't also independently testing "overlap as fraction of
+      // window", which would confound the result with extra dedup noise.
+      const OVERLAP_MS = 1000;
 
       this.forceCommitTimer = setInterval(() => {
         if (!this.hasUncommittedAudio || !this.upstreamReady || this.upstream?.readyState !== WebSocket.OPEN) return;
