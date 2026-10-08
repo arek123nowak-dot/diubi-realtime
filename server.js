@@ -617,7 +617,7 @@ class TranscriptionSession {
       // just-committed audio again as the start of the next buffer gives
       // that boundary word full context in at least one chunk. See the
       // dedup logic in the delta handler for the text-side half of this.
-      const OVERLAP_MS = 1000;
+      const OVERLAP_MS = 2500;
 
       this.forceCommitTimer = setInterval(() => {
         if (!this.hasUncommittedAudio || !this.upstreamReady || this.upstream?.readyState !== WebSocket.OPEN) return;
@@ -1015,7 +1015,16 @@ class TranscriptionSession {
     // QUIET_AMPLITUDE (which only needs to catch a brief pause between
     // words), so real speech — including quiet speech — still goes through.
     const SILENCE_THRESHOLD = 150;
-    if (this.recentAmplitude < SILENCE_THRESHOLD) return;
+    if (this.recentAmplitude < SILENCE_THRESHOLD) {
+      // TEMPORARY diagnostic: confirms/refutes whether genuine (quiet) speech
+      // is being dropped here before it ever reaches audioRing/OpenAI - a
+      // chunk lost this way cannot be recovered by the overlap mechanism,
+      // since overlap only resends audio already in audioRing.
+      console.log(
+        `[ASR SILENCE-DROP] ts=${new Date().toISOString()} amplitude=${this.recentAmplitude.toFixed(0)} threshold=${SILENCE_THRESHOLD}`
+      );
+      return;
+    }
 
     const rawBuffer = Buffer.from(base64Audio, "base64");
 
