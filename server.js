@@ -108,6 +108,7 @@ app.post("/api/phrases", (req, res) => {
     sentenceTranslation,
     meaning,
     example,
+    exampleTranslation,
     pronunciation,
     sourceLabel,
     sourceUrl,
@@ -150,6 +151,7 @@ app.post("/api/phrases", (req, res) => {
     sentenceTranslation: sentenceTranslation || "",
     meaning: meaning || "",
     example: example || "",
+    exampleTranslation: exampleTranslation || "",
     pronunciation: pronunciation || "",
     sourceLabel: sourceLabel || "",
     sourceUrl: sourceUrl || "",
@@ -224,6 +226,7 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
             `"translation" (krotkie tlumaczenie samej frazy na jezyk ${targetLang}), ` +
             `"meaning" (1-2 zdania w jezyku ${targetLang} wyjasniajace co ta fraza znaczy KONKRETNIE w podanym kontekscie, nie ogolna definicja slownikowa), ` +
             `"example" (jedno NOWE przykladowe zdanie w jezyku oryginalnej frazy, inne niz podany kontekst, uzywajace tej frazy), ` +
+            `"exampleTranslation" (tlumaczenie TEGO WLASNIE przykladowego zdania na jezyk ${targetLang}), ` +
             `"pronunciation" (wymowa frazy - IPA jesli to sensowne dla tego jezyka, inaczej prosty zapis fonetyczny; pusty string jesli nie da sie sensownie podac).`,
         },
         {
@@ -247,6 +250,7 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
     translation: parsed.translation || "",
     meaning: parsed.meaning || "",
     example: parsed.example || "",
+    exampleTranslation: parsed.exampleTranslation || "",
     pronunciation: parsed.pronunciation || "",
   };
 }

@@ -870,6 +870,7 @@ function explainFieldsHtml(data) {
     <div class="field-value">${escapeHtml(data.translation)}</div>
     ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
     ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
+    ${data.example && data.exampleTranslation ? `<div class="field-value-sub">${escapeHtml(data.exampleTranslation)}</div>` : ""}
     ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
   `;
 }
@@ -942,6 +943,7 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId, s
       sentenceTranslation: sentenceTranslation || "",
       meaning: explainData.meaning,
       example: explainData.example,
+      exampleTranslation: explainData.exampleTranslation,
       pronunciation: explainData.pronunciation,
       sourceLabel,
       sourceUrl,
