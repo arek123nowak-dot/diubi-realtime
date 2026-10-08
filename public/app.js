@@ -1293,9 +1293,11 @@ function renderReviewPrompt(card) {
           ? `<button class="btn-secondary btn-review-skip">Pomin →</button>`
           : ""
       }
+      <button class="btn-close">Zamknij</button>
     </div>
   `;
   wireReviewNav(card);
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
   card.querySelector(".btn-review-skip")?.addEventListener("click", () => {
     reviewIndex++;
     renderReviewPrompt(card);
