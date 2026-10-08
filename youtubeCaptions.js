@@ -138,16 +138,31 @@ async function getYouTubeCaptions(videoId) {
   if (!track?.baseUrl) return unavailable(videoId, "chosen-track-missing-baseurl");
   const baseUrl = track.baseUrl.startsWith("http") ? track.baseUrl : `https:${track.baseUrl}`;
 
+  console.log(`[YT CAPTIONS] videoId=${videoId} fetching caption track baseUrl=${baseUrl}`);
   const captionRes = await fetch(`${baseUrl}&fmt=json3`, {
     headers: { "User-Agent": USER_AGENT },
   });
+  console.log(
+    `[YT CAPTIONS] videoId=${videoId} caption track response httpStatus=${captionRes.status} ` +
+      `contentType=${captionRes.headers.get("content-type") || "?"}`
+  );
   if (!captionRes.ok) return unavailable(videoId, "caption-track-fetch-failed", `httpStatus=${captionRes.status}`);
+
+  // Read as text first (not res.json() directly) so a parse failure still
+  // leaves us the raw body to log - a bare "Unexpected end of JSON input"
+  // alone doesn't say whether YouTube sent back nothing, an error page, or
+  // something else entirely.
+  const captionText = await captionRes.text();
+  console.log(
+    `[YT CAPTIONS] videoId=${videoId} caption track body length=${captionText.length} ` +
+      `prefix="${captionText.slice(0, 200).replace(/\n/g, " ")}"`
+  );
 
   let captionJson;
   try {
-    captionJson = await captionRes.json();
+    captionJson = JSON.parse(captionText);
   } catch (err) {
-    return unavailable(videoId, "caption-track-json-parse-failed", `err="${err.message}"`);
+    return unavailable(videoId, "caption-track-json-parse-failed", `bodyLength=${captionText.length} err="${err.message}"`);
   }
 
   const rawCues = (captionJson.events || [])
