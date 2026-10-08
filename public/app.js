@@ -14,7 +14,6 @@ const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const backToStartBtn = document.getElementById("backToStartBtn");
 const returnCard = document.getElementById("returnCard");
 const spotifyHint = document.getElementById("spotifyHint");
-const fallbackStartBtn = document.getElementById("fallbackStartBtn");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -67,9 +66,11 @@ let selectedPlatform = null;
 let currentContent = null;
 
 // YouTube captions-sync mode: when the video has official/auto captions,
-// we skip live ASR entirely (no tab-audio permission prompt, no
-// transcription lag/mishearing) and instead reveal pre-translated segments
-// as ytPlayer's own playback clock reaches each one's start time.
+// we switch over to them and shut down live ASR (no more transcription
+// lag/mishearing) and instead reveal pre-translated segments as ytPlayer's
+// own playback clock reaches each one's start time. Live listening always
+// starts first regardless (see loadSource) - switching away from it is
+// strictly a bonus once we know captions exist, not a precondition.
 let captionsActive = false;
 let captionSegments = [];
 let captionRevealIndex = 0;
@@ -80,13 +81,6 @@ let captionsPollTimer = null;
 // so the normal picker — not a preference for this tab — is what they need.
 startBtn.addEventListener("click", () => start({ preferCurrentTab: false }));
 stopBtn.addEventListener("click", stop);
-// Manual fallback for a YouTube video with no captions - a fresh click here
-// is its own user gesture, so getDisplayMedia (via start()) works fine even
-// though the captions check that revealed this button was itself async.
-fallbackStartBtn.addEventListener("click", () => {
-  fallbackStartBtn.classList.remove("visible");
-  start();
-});
 loadSourceBtn.addEventListener("click", loadSource);
 sourceUrlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadSource();
@@ -146,12 +140,14 @@ function loadSource() {
     // be awaited here — same reasoning as the captions check below.
     setupYouTubePlayer(videoId, url);
     // Also fire-and-forget: whether this video has official captions decides
-    // which path we take (skip live ASR entirely, or fall back to it), but
-    // that decision can't block this click handler without losing the user
-    // gesture getDisplayMedia needs for the fallback case. See
-    // beginYouTubeCaptionsCheck/showNoCaptionsFallback.
+    // which path we end up on, but that check takes a moment (a network
+    // round trip), and getDisplayMedia below needs THIS click's gesture
+    // right now - it won't still count as "triggered by a click" once an
+    // await has happened. So live listening always starts immediately, the
+    // same as before captions-sync mode existed; beginYouTubeCaptionsCheck
+    // silently cancels it and switches over if captions turn out to be
+    // available a moment later. See startCaptionsPlayback.
     beginYouTubeCaptionsCheck(videoId);
-    return;
   } else {
     const embedSrc = buildSpotifyEmbed(url);
     if (!embedSrc) {
@@ -294,16 +290,17 @@ function handleYouTubeError(code, originalUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// YouTube captions-sync mode: when captionsActive, there is no live ASR
-// session at all (no getDisplayMedia prompt, no /stream WebSocket) - the
-// whole video's captions were fetched and translated up front (see
-// beginYouTubeCaptionsCheck), and this just reveals them in step with
-// ytPlayer's own playback position. Falls back to the normal live-listening
-// flow (via fallbackStartBtn) whenever a video has no captions to use.
+// YouTube captions-sync mode: when captionsActive, live ASR has been shut
+// down (see startCaptionsPlayback) - the whole video's captions were
+// fetched and translated up front (see beginYouTubeCaptionsCheck), and this
+// just reveals them in step with ytPlayer's own playback position. Entirely
+// automatic either way: live listening starts the instant a YouTube source
+// loads (same as before captions-sync mode existed), and silently gets
+// swapped for captions-sync a moment later if this check finds any -
+// nothing for the user to click in either case.
 // ---------------------------------------------------------------------------
 
 async function beginYouTubeCaptionsCheck(videoId) {
-  setStatus("Sprawdzam, czy YouTube ma napisy do tego filmu...");
   const target = targetLangInput.value.trim() || "pl";
 
   let data;
@@ -322,26 +319,28 @@ async function beginYouTubeCaptionsCheck(videoId) {
 
   if (data.available && Array.isArray(data.segments) && data.segments.length > 0) {
     startCaptionsPlayback(data.segments);
-  } else {
-    showNoCaptionsFallback();
+  } else if (!lastErrorMessage) {
+    // Informational, not an error - most videos don't have captions, this
+    // is the expected path, not something broken. Live listening is
+    // already running (started synchronously back in loadSource) - nothing
+    // left to do here but explain why. Skipped if live listening itself
+    // already reported a real problem (daily limit, missing API key etc.)
+    // - that message matters more and shouldn't get overwritten by this one.
+    setStatus("Ten film nie ma napisow YouTube - korzystamy z nasluchu na zywo. Reakcja moze byc lekko opozniona.");
   }
 }
 
-function showNoCaptionsFallback() {
-  // Informational, not an error - this is the expected path for most
-  // videos (not every video has captions), same tone as the getDisplayMedia
-  // instructions above, not the red "something broke" styling.
-  setStatus("Ten film nie ma napisow YouTube - kliknij ponizej, by uruchomic nasluch audio.");
-  fallbackStartBtn.classList.add("visible");
-}
-
 function startCaptionsPlayback(segments) {
+  // Live listening started automatically the instant this source loaded
+  // (preserving the click's gesture for getDisplayMedia, in case captions
+  // turned out to be unavailable) - now that captions ARE available, shut
+  // it down rather than run both at once.
+  stop();
   captionsActive = true;
   captionSegments = segments;
   captionRevealIndex = 0;
   rows.clear();
   reelEl.innerHTML = "";
-  fallbackStartBtn.classList.remove("visible");
   // Live ASR and captions-sync are mutually exclusive for one loaded source
   // - disabled rather than left clickable to avoid both running at once.
   startBtn.disabled = true;
@@ -389,7 +388,6 @@ function stopCaptionsPlayback() {
     clearInterval(captionsPollTimer);
     captionsPollTimer = null;
   }
-  fallbackStartBtn.classList.remove("visible");
 }
 
 function showEmbedBlockedFallback(originalUrl) {
