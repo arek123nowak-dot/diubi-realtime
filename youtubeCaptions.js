@@ -89,41 +89,65 @@ function mergeCuesToSentences(cues) {
   return sentences;
 }
 
+/** Logs WHERE this gave up, not just that it did - "available: false" alone
+ * gave no way to tell a genuinely caption-less video apart from our own
+ * parsing breaking on a video that demonstrably has a transcript (the
+ * exact case that showed up in testing: YouTube's own transcript panel had
+ * it, we didn't find it). */
+function unavailable(videoId, reason, extra) {
+  console.log(`[YT CAPTIONS] unavailable videoId=${videoId} reason=${reason}${extra ? " " + extra : ""}`);
+  return { available: false };
+}
+
 /** Returns { available: false } or { available: true, sourceLang, segments }
  * - never throws; any unexpected shape (no captions, blocked page, parse
  * failure) just means "unavailable", so the caller falls back to live ASR
  * instead of surfacing an error for something that's a normal, common case. */
 async function getYouTubeCaptions(videoId) {
   const html = await fetchWatchPageHtml(videoId);
+  console.log(`[YT CAPTIONS] videoId=${videoId} fetched watch page, length=${html.length}`);
+
   const json = extractJsonAfterMarker(html, "ytInitialPlayerResponse");
-  if (!json) return { available: false };
+  if (!json) return unavailable(videoId, "marker-not-found-in-html");
 
   let playerResponse;
   try {
     playerResponse = JSON.parse(json);
-  } catch {
-    return { available: false };
+  } catch (err) {
+    return unavailable(videoId, "player-response-json-parse-failed", `jsonLength=${json.length} err="${err.message}"`);
   }
 
+  const status = playerResponse?.playabilityStatus?.status;
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!Array.isArray(tracks) || tracks.length === 0) return { available: false };
+  if (!Array.isArray(tracks) || tracks.length === 0) {
+    return unavailable(
+      videoId,
+      "no-caption-tracks-in-player-response",
+      `playabilityStatus=${status || "?"} hasCaptionsKey=${Boolean(playerResponse?.captions)}`
+    );
+  }
+  console.log(
+    `[YT CAPTIONS] videoId=${videoId} found ${tracks.length} track(s): ${tracks
+      .map((t) => `${t.languageCode}${t.kind === "asr" ? "(asr)" : ""}`)
+      .join(", ")}`
+  );
 
   // A manually-created/uploaded track (kind !== "asr") is generally cleaner
   // than auto-generated ones - prefer it when both exist.
   const track = tracks.find((t) => t.kind !== "asr") || tracks[0];
-  if (!track?.baseUrl) return { available: false };
+  if (!track?.baseUrl) return unavailable(videoId, "chosen-track-missing-baseurl");
   const baseUrl = track.baseUrl.startsWith("http") ? track.baseUrl : `https:${track.baseUrl}`;
 
   const captionRes = await fetch(`${baseUrl}&fmt=json3`, {
     headers: { "User-Agent": USER_AGENT },
   });
-  if (!captionRes.ok) return { available: false };
+  if (!captionRes.ok) return unavailable(videoId, "caption-track-fetch-failed", `httpStatus=${captionRes.status}`);
 
   let captionJson;
   try {
     captionJson = await captionRes.json();
-  } catch {
-    return { available: false };
+  } catch (err) {
+    return unavailable(videoId, "caption-track-json-parse-failed", `err="${err.message}"`);
   }
 
   const rawCues = (captionJson.events || [])
@@ -138,10 +162,12 @@ async function getYouTubeCaptions(videoId) {
         .trim(),
     }))
     .filter((c) => c.text);
+  console.log(`[YT CAPTIONS] videoId=${videoId} rawEvents=${(captionJson.events || []).length} rawCuesWithText=${rawCues.length}`);
 
   const segments = mergeCuesToSentences(rawCues);
-  if (segments.length === 0) return { available: false };
+  if (segments.length === 0) return unavailable(videoId, "no-segments-after-merge", `rawCues=${rawCues.length}`);
 
+  console.log(`[YT CAPTIONS] videoId=${videoId} available=true segments=${segments.length}`);
   return { available: true, sourceLang: track.languageCode || "", segments };
 }
 
