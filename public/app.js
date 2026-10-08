@@ -624,6 +624,20 @@ function startCapture() {
     // See activeClipPlaybacks above - tab capture would otherwise hear our
     // own clip playback and feed it right back in as new speech.
     if (!ws || ws.readyState !== WebSocket.OPEN || activeClipPlaybacks > 0) return;
+    // Confirmed in testing: pausing the video (e.g. to browse Mój pamietnik)
+    // doesn't mean true silence on the captured tab - faint background
+    // noise occasionally crept just above the amplitude threshold below and
+    // got hallucinated into short, unrelated foreign-script fragments. The
+    // amplitude check alone is porous; the player's own play state is a
+    // much harder signal - ASR should only ever hear the video, not "the
+    // tab isn't quiet enough". Only gates the YouTube path (the only player
+    // whose state we can actually query); Spotify's plain iframe and the
+    // no-source flow fall through to the amplitude filter alone, same as
+    // before.
+    if (playerPlatform === "youtube" && ytPlayer && typeof ytPlayer.getPlayerState === "function") {
+      const YT_PLAYING = 1;
+      if (ytPlayer.getPlayerState() !== YT_PLAYING) return;
+    }
 
     const input = event.inputBuffer;
     const channelCount = input.numberOfChannels;
