@@ -525,6 +525,7 @@ class TranscriptionSession {
     this.currentDeltaItemId = null; // item_id the delta handler is currently accumulating for
     this.dedupResolved = true; // false while still waiting to see if the current item's start duplicates the previous item's end
     this.pendingDedupRaw = ""; // raw (undeduped) delta text accumulated for the current item while dedupResolved is false
+    this.lastFedItemId = null; // item_id of the most recent feedSentenceText call, for the item-boundary space fix below
 
     // TEMPORARY cost-measurement instrumentation (see [USAGE] log lines) —
     // lets a short real-world test session convert directly into an actual
@@ -875,7 +876,19 @@ class TranscriptionSession {
     if (!this.textBuffer) {
       this.textBufferStartedAt = Date.now();
       this.textBufferStartItemId = itemId || null;
+    } else if (itemId !== this.lastFedItemId && !/\s$/.test(this.textBuffer) && !/^\s/.test(text)) {
+      // Crossing into a new item's text while textBuffer still holds an
+      // unfinished sentence from the previous one - OpenAI's first delta
+      // of a new item never carries a leading space (confirmed in every
+      // item in a real test log: "The", "This", "where", "No", "work",
+      // "What's"...), so without this the two items' text fuses into one
+      // unreadable run ("...extremely powerful.where you had..."). Scoped
+      // to exactly this item-boundary crossing - never between two deltas
+      // of the SAME item, where a missing space is often intentional
+      // (e.g. "Open" + "AI" -> "OpenAI").
+      this.textBuffer += " ";
     }
+    this.lastFedItemId = itemId;
     this.textBuffer += text;
     const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
     for (const sentence of sentences) {
@@ -1223,6 +1236,22 @@ function normalizeWordForCompare(word) {
   return word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
+/** True if two already-normalized words should count as "the same word" at
+ * a dedup boundary. Exact match always counts; additionally, one being a
+ * short prefix of the other counts too - confirmed necessary in testing:
+ * re-transcribing the SAME overlapped audio twice isn't perfectly
+ * deterministic, and produced "work" the second time where the first had
+ * produced "worked". Guarded narrowly (shorter word >=3 chars, length gap
+ * <=3) so this doesn't start treating short, common, genuinely different
+ * words (e.g. "a"/"an", "is"/"in") as matches. */
+function wordsRoughlyMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  return shorter.length >= 3 && longer.length - shorter.length <= 3 && longer.startsWith(shorter);
+}
+
 /** Returns the last `maxWords` words of `text`, for the [ASR DEDUP] log line. */
 function tailWords(text, maxWords) {
   const words = (text || "").trim().split(/\s+/).filter(Boolean);
@@ -1265,9 +1294,9 @@ function tryResolveOverlap(pendingRaw, previousTranscript, maxOverlapWords, fina
   let bestK = 0;
   const maxK = Math.min(normPending.length, tailNorm.length);
   for (let k = maxK; k >= 1; k--) {
-    const candidate = tailNorm.slice(tailNorm.length - k).join(" ");
-    const pendingSlice = normPending.slice(0, k).join(" ");
-    if (candidate && candidate === pendingSlice) {
+    const candidateWords = tailNorm.slice(tailNorm.length - k);
+    const pendingWords = normPending.slice(0, k);
+    if (candidateWords.length && candidateWords.every((w, i) => wordsRoughlyMatch(w, pendingWords[i]))) {
       bestK = k;
       break;
     }
