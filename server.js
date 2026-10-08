@@ -793,7 +793,42 @@ class TranscriptionSession {
         break;
       }
 
-      case "conversation.item.input_audio_transcription.completed":
+      case "conversation.item.input_audio_transcription.completed": {
+        // TEMPORARY diagnostic: pinpoint whether a phrase missing from the
+        // transcript corresponds to a real quiet/silent stretch inside this
+        // item's audio window, or to genuine speech the model just didn't
+        // transcribe. The Realtime transcription API gives no word-level
+        // timestamps (completed only has the full transcript + usage), so
+        // this reconstructs the closest available substitute: a per-500ms
+        // RMS amplitude profile of the audio we actually sent, from the
+        // same audioRing/itemAudioWindows bookkeeping clip capture uses.
+        const debugWindow = this.itemAudioWindows.get(event.item_id);
+        if (debugWindow) {
+          const chunksInWindow = this.audioRing.filter((c) => c.ts >= debugWindow.start && c.ts <= debugWindow.end);
+          const BUCKET_MS = 500;
+          const buckets = [];
+          for (const chunk of chunksInWindow) {
+            const bucketIndex = Math.floor((chunk.ts - debugWindow.start) / BUCKET_MS);
+            if (!buckets[bucketIndex]) buckets[bucketIndex] = { sumSquares: 0, samples: 0 };
+            const samples = chunk.buf.length / 2;
+            for (let i = 0; i < samples; i++) {
+              const sample = chunk.buf.readInt16LE(i * 2);
+              buckets[bucketIndex].sumSquares += sample * sample;
+            }
+            buckets[bucketIndex].samples += samples;
+          }
+          const profile = buckets
+            .map((b, i) => `${((i * BUCKET_MS) / 1000).toFixed(1)}s:${b ? Math.round(Math.sqrt(b.sumSquares / b.samples)) : "-"}`)
+            .join(" ");
+          const audioSentMs = chunksInWindow.reduce((sum, c) => sum + (c.buf.length / 2 / TARGET_SAMPLE_RATE) * 1000, 0);
+          console.log(
+            `[ASR WINDOW DEBUG] item=${event.item_id} start=${new Date(debugWindow.start).toISOString()} ` +
+              `end=${new Date(debugWindow.end).toISOString()} durationMs=${(debugWindow.end - debugWindow.start).toFixed(0)} ` +
+              `audioSentToASR=${audioSentMs.toFixed(0)} transcript="${event.transcript || ""}"`
+          );
+          console.log(`[ASR AMPLITUDE PROFILE] item=${event.item_id} (500ms buckets, RMS, amplitude<150=silence-would-drop) ${profile}`);
+        }
+
         if (event.item_id === this.currentDeltaItemId) {
           // Edge case: a very short item whose total word count never
           // reached OVERLAP_MAX_WORDS, so the delta handler never got to
@@ -821,6 +856,7 @@ class TranscriptionSession {
         // sentence is actually finished. The idle-flush timer is what
         // eventually sends a trailing fragment if nothing follows it.
         break;
+      }
 
       case "input_audio_buffer.committed": {
         // hasUncommittedAudio/sinceLastCommitAt are NOT reset here anymore -
