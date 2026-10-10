@@ -59,6 +59,14 @@ function wireClipAudio(audioEl) {
 // it finalizes.
 const rows = new Map();
 
+// segmentId -> true once the server's async coherence check (see
+// checkSentenceConfidence in server.js) flags that sentence as likely ASR
+// noise/hallucination rather than real speech. Kept client-side so it can
+// still mark the row after transcript_final already rendered it, and so
+// openExplainCard/saveToNotebook can warn about a phrase even though the
+// check resolves after the word was already clickable.
+const lowConfidenceSegments = new Set();
+
 let selectedPlatform = null;
 // The currently loaded source's identity, for auto-recording "Moja nauka"
 // history on the next saved phrase - never a user-facing action, just
@@ -555,6 +563,17 @@ function handleServerMessage(msg) {
       scrollToBottom();
       break;
     }
+    case "transcript_confidence": {
+      // Arrives after transcript_final (it's a separate, slower async check
+      // on the server - see checkSentenceConfidence) so the row already
+      // exists; just flag it in place rather than waiting to render it.
+      if (msg.lowConfidence) {
+        lowConfidenceSegments.add(msg.segmentId);
+        const row = rows.get(msg.segmentId);
+        if (row) row.el.classList.add("low-confidence");
+      }
+      break;
+    }
     case "translation_error": {
       // Marked on the specific row that failed (after the server already
       // retried) rather than only a generic status-bar message, so it's
@@ -818,10 +837,12 @@ function openModal(innerHtml) {
 }
 
 async function openExplainCard(phrase, contextSentence, segmentId, sentenceTranslation, sourceTimestampSec) {
+  const lowConfidence = lowConfidenceSegments.has(segmentId);
   const overlay = openModal(`
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
     ${phraseSrcTranslationHtml(sentenceTranslation)}
+    ${confidenceWarningHtml(lowConfidence)}
     <p class="loading">Szukam wyjasnienia...</p>
   `);
 
@@ -853,6 +874,7 @@ async function openExplainCard(phrase, contextSentence, segmentId, sentenceTrans
     <h2>${escapeHtml(phrase)}</h2>
     <p class="phrase-src">${escapeHtml(contextSentence)}</p>
     ${phraseSrcTranslationHtml(sentenceTranslation)}
+    ${confidenceWarningHtml(lowConfidence)}
     ${explainFieldsHtml(data)}
     <div class="modal-actions">
       <button class="btn-remember">⭐ Zapamietaj</button>
@@ -865,7 +887,7 @@ async function openExplainCard(phrase, contextSentence, segmentId, sentenceTrans
     rememberBtn.disabled = true;
     rememberBtn.textContent = "Zapisywanie...";
     try {
-      await saveToNotebook(phrase, contextSentence, data, segmentId, sentenceTranslation, sourceTimestampSec);
+      await saveToNotebook(phrase, contextSentence, data, segmentId, sentenceTranslation, sourceTimestampSec, lowConfidence);
       rememberBtn.textContent = "⭐ Zapisano";
     } catch {
       rememberBtn.disabled = false;
@@ -896,6 +918,18 @@ function explainFieldsHtml(data) {
 function phraseSrcTranslationHtml(sentenceTranslation) {
   if (!sentenceTranslation) return "";
   return `<p class="phrase-src-translation">${escapeHtml(sentenceTranslation)}</p>`;
+}
+
+/** Shown whenever the server's coherence check (checkSentenceConfidence)
+ * flagged the source sentence as likely ASR noise/hallucination rather than
+ * real speech - a confirmed, real failure mode (e.g. "Uyghurs in the world
+ * right now.", "The queer forefying prediction"), not a hypothetical. Never
+ * hides the sentence/translation/example - DIUBI still shows what it has,
+ * it just stops presenting it with the same unearned confidence as real
+ * speech. */
+function confidenceWarningHtml(lowConfidence) {
+  if (!lowConfidence) return "";
+  return `<p class="confidence-warning">⚠️ Ta transkrypcja może być niedokladna (bledne rozpoznanie mowy) - tlumaczenie i wyjasnienie ponizej moga nie byc wiarygodne.</p>`;
 }
 
 function clipPlayerHtml(p) {
@@ -935,6 +969,7 @@ function showSavedPhraseCard(p) {
     <h2>${escapeHtml(p.phrase)}</h2>
     <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
     ${phraseSrcTranslationHtml(p.sentenceTranslation)}
+    ${confidenceWarningHtml(p.lowConfidence)}
     ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
@@ -943,7 +978,7 @@ function showSavedPhraseCard(p) {
   wireClipAudioElements(overlay);
 }
 
-async function saveToNotebook(phrase, contextSentence, explainData, segmentId, sentenceTranslation, sourceTimestampSec) {
+async function saveToNotebook(phrase, contextSentence, explainData, segmentId, sentenceTranslation, sourceTimestampSec, lowConfidence) {
   const { sourceLabel, sourceUrl } = currentSourceMeta();
   const res = await fetch("/api/phrases", {
     method: "POST",
@@ -969,6 +1004,10 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId, s
       contentTitle: currentContent?.title || "",
       contentThumbnail: currentContent?.thumbnail || "",
       sourceTimestampSec: typeof sourceTimestampSec === "number" ? sourceTimestampSec : null,
+      // Authoritative source is the server's own segmentConfidence (see
+      // POST /api/phrases) - this is only a fallback for when that record
+      // already aged out or the async check hadn't resolved yet.
+      lowConfidence: Boolean(lowConfidence),
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1020,7 +1059,7 @@ function renderNotebook(card, phrases) {
       (p) => `
       <div class="notebook-item" data-id="${p.id}" tabindex="0">
         <button class="np-delete" title="Usun">✕</button>
-        <div class="np-phrase">${escapeHtml(p.phrase)}</div>
+        <div class="np-phrase">${escapeHtml(p.phrase)} ${p.lowConfidence ? '<span class="np-warning" title="Transkrypcja tego fragmentu moze byc niedokladna">⚠️</span>' : ""}</div>
         <div class="np-translation">${escapeHtml(p.translation)}</div>
         ${p.contextSentence ? `<div class="np-context">"${escapeHtml(p.contextSentence)}"</div>` : ""}
         <div class="np-meta">${[p.hasClip ? "🎧" : null, p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
@@ -1331,6 +1370,7 @@ function renderReviewAnswer(card) {
     <p class="review-phrase">${escapeHtml(p.phrase)}</p>
     ${p.contextSentence ? `<p class="phrase-src">${escapeHtml(p.contextSentence)}</p>` : ""}
     ${phraseSrcTranslationHtml(p.sentenceTranslation)}
+    ${confidenceWarningHtml(p.lowConfidence)}
     ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions">

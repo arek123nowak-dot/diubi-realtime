@@ -136,6 +136,7 @@ app.post("/api/phrases", (req, res) => {
     contentTitle,
     contentThumbnail,
     sourceTimestampSec,
+    lowConfidence: clientLowConfidence,
   } = req.body || {};
   if (!userId || !phrase || !translation) {
     return res.status(400).json({ error: "Brak wymaganych pol (userId, phrase, translation)." });
@@ -149,6 +150,16 @@ app.post("/api/phrases", (req, res) => {
   // was captured then and, if present, writes it out as this phrase's clip.
   const session = sessionId ? activeSessionsById.get(sessionId) : null;
   const clip = session && segmentId != null ? session.segmentClips.get(segmentId) : null;
+  // See checkSentenceConfidence() - prefer the server's own record, but a
+  // long-finished session can have aged it out of segmentConfidence (or the
+  // async check simply hadn't resolved yet when the user clicked
+  // Zapamietaj); the client already received the same transcript_confidence
+  // message live and echoes it back as a fallback rather than the save
+  // silently losing the flag.
+  const lowConfidence =
+    session && segmentId != null && session.segmentConfidence.has(segmentId)
+      ? session.segmentConfidence.get(segmentId)
+      : Boolean(clientLowConfidence);
   console.log(
     `[SAVE PHRASE] phrase="${phrase}" sentence="${contextSentence || ""}" ` +
       `sessionFound=${Boolean(session)} segmentId=${segmentId} ` +
@@ -177,6 +188,7 @@ app.post("/api/phrases", (req, res) => {
     // the exact moment in the source video instead of nothing at all.
     sourceTimestampSec: typeof sourceTimestampSec === "number" ? sourceTimestampSec : null,
     hasClip: Boolean(clip),
+    lowConfidence,
     capturedAt: Date.now(),
   });
 
@@ -486,6 +498,13 @@ class TranscriptionSession {
     this.audioRing = [];
     this.audioRingMs = 0;
     this.segmentClips = new Map();
+    // Per-segment "does this sentence look like real speech, or ASR
+    // noise/hallucination" result - see checkSentenceConfidence(). Separate
+    // from segmentClips since it applies even when no audio clip exists
+    // (captureClip can legitimately skip one, see its fail-closed check)
+    // and needs to survive long enough for a "Zapamietaj" save (same
+    // lifetime/eviction policy as segmentClips).
+    this.segmentConfidence = new Map();
     // Real audio capture windows, keyed by the item_id OpenAI assigns to
     // each committed chunk — see the forceCommitTimer and the
     // input_audio_buffer.committed/delta handling below. This is what makes
@@ -998,6 +1017,11 @@ class TranscriptionSession {
       sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
       this.translate(trimmed, segmentId);
       this.captureClip(segmentId, trimmed, startItemId, endItemId);
+      // Fire-and-forget, same pattern as abTestBatchTranscribe above - never
+      // blocks the live transcript/translation. See checkSentenceConfidence.
+      this.checkSentenceConfidence(segmentId, trimmed).catch((err) => {
+        console.error(`[CONFIDENCE] segment=${segmentId} failed: ${err.message}`);
+      });
     }
   }
 
@@ -1286,6 +1310,65 @@ class TranscriptionSession {
       // leaving that row's translation blank forever while an unrelated
       // banner flashes somewhere else on screen.
       sendJson(this.clientWs, { type: "translation_error", segmentId, message: err.message });
+    }
+  }
+
+  /**
+   * Classifies whether a completed sentence reads like real, coherent
+   * speech or like ASR noise/hallucination (e.g. "Uyghurs in the world
+   * right now." or "The queer forefying prediction" - both confirmed
+   * live tonight: neither came from our own overlap/dedup, both were the
+   * model's raw output). A dictionary/spellcheck can't catch most of
+   * these - they're real English words, just contextually meaningless -
+   * so this asks the same translation model to judge coherence instead.
+   * Fire-and-forget from emitSentence: never blocks or delays the live
+   * transcript/translation either way. Result is both pushed to the
+   * client (so an already-rendered line can be flagged after the fact)
+   * and cached in segmentConfidence so a later "Zapamietaj" save can
+   * carry the flag into the saved phrase - DIUBI would otherwise explain
+   * and translate nonsense with the same calm confidence as real speech.
+   */
+  async checkSentenceConfidence(segmentId, text) {
+    const MAX_TRACKED = 80;
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: TRANSLATION_MODEL,
+          temperature: 0,
+          max_tokens: 1,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Oceniasz jedno zdanie z automatycznej transkrypcji mowy na żywo. " +
+                "Czy brzmi jak spójna, naturalna wypowiedź, czy jak błąd/halucynacja " +
+                'rozpoznawania mowy (przypadkowe, bezsensowne w kontekście słowa)? ' +
+                'Odpowiedz WYŁĄCZNIE jednym słowem: "OK" albo "SUSPECT".',
+            },
+            { role: "user", content: text },
+          ],
+        }),
+      });
+      if (!response.ok) return;
+      const body = await response.json();
+      const verdict = (body.choices?.[0]?.message?.content || "").trim().toUpperCase();
+      const lowConfidence = verdict.startsWith("SUSPECT");
+
+      this.segmentConfidence.set(segmentId, lowConfidence);
+      if (this.segmentConfidence.size > MAX_TRACKED) {
+        this.segmentConfidence.delete(this.segmentConfidence.keys().next().value);
+      }
+      if (lowConfidence) {
+        console.log(`[CONFIDENCE] segment=${segmentId} flagged as SUSPECT: "${text}"`);
+      }
+      sendJson(this.clientWs, { type: "transcript_confidence", segmentId, lowConfidence });
+    } catch (err) {
+      console.error(`[CONFIDENCE] segment=${segmentId} request failed: ${err.message}`);
     }
   }
 

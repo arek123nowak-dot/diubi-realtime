@@ -324,6 +324,21 @@
     font-weight: 600;
   }
   .clip-timestamp-link:hover { text-decoration: underline; }
+  /* See checkSentenceConfidence (server.js) / confidenceWarningHtml (app.js) -
+     flags a sentence the ASR likely mis-heard rather than hiding it. */
+  .modal-card .confidence-warning {
+    color: #e8b84f;
+    background: rgba(232, 184, 79, 0.12);
+    border: 1px solid rgba(232, 184, 79, 0.35);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    margin: 0 0 14px;
+  }
+  .np-warning { font-size: 0.85em; }
+  .row.low-confidence .cell.original {
+    box-shadow: inset 3px 0 0 #e8b84f;
+  }
 
   .review-progress { float: right; font-size: 0.75rem; color: var(--muted); font-weight: 400; }
   .review-prompt { color: var(--muted); font-size: 0.8rem; margin: 16px 0 2px; }
