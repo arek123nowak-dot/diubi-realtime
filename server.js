@@ -6,7 +6,7 @@ const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const { listPhrases, addPhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
-const { CLIPS_DIR, saveClip, deleteClip } = require("./clips");
+const { CLIPS_DIR, saveClip, deleteClip, pcm16ToWav } = require("./clips");
 const { listContent, upsertContent } = require("./userContent");
 const { getYouTubeCaptions } = require("./youtubeCaptions");
 
@@ -29,6 +29,17 @@ const PORT = process.env.PORT || 3000;
 // reasonable pace (OVERLAP_MS, in TranscriptionSession.start()), without
 // scanning the whole transcript on every delta.
 const OVERLAP_MAX_WORDS = 10;
+
+// TEMPORARY diagnostic (A/B test, off by default): when enabled, every
+// completed sentence's audio clip - the exact same PCM window already built
+// in captureClip() for Zapamietaj - is ALSO sent, fire-and-forget, as a
+// single non-streaming request to OpenAI's standard (non-Realtime)
+// transcription endpoint, purely for side-by-side comparison in the logs.
+// Never awaited and always wrapped in try/catch, so a failure or slow
+// response here cannot affect the live Realtime pipeline, its timing, the
+// transcript shown to the user, or anything else in production. Remove
+// once the A/B question is answered.
+const AB_TEST_BATCH_TRANSCRIBE = process.env.AB_TEST_BATCH_TRANSCRIBE === "1";
 
 // Per-device (anonymous userId, same one used for the notebook) and
 // server-wide daily listening caps — the only realistic way to stop a
@@ -1016,6 +1027,47 @@ class TranscriptionSession {
     if (this.segmentClips.size > MAX_CLIP_SEGMENTS) {
       this.segmentClips.delete(this.segmentClips.keys().next().value);
     }
+
+    // Fire-and-forget: see AB_TEST_BATCH_TRANSCRIBE above. Not awaited -
+    // this function returns immediately either way, so the realtime
+    // pipeline's timing is identical whether this is on or off.
+    if (AB_TEST_BATCH_TRANSCRIBE) {
+      this.abTestBatchTranscribe(segmentId, text, clipBuffer).catch((err) => {
+        console.error(`[AB TEST BATCH] segment=${segmentId} failed: ${err.message}`);
+      });
+    }
+  }
+
+  /**
+   * TEMPORARY diagnostic (see AB_TEST_BATCH_TRANSCRIBE): sends the exact
+   * same audio clipBuffer captureClip() just built - the same bytes the
+   * Realtime pipeline heard for this sentence - as ONE single-shot request
+   * to OpenAI's standard (non-Realtime) /v1/audio/transcriptions endpoint,
+   * with no chunking/overlap/dedup of ours involved at all. Logs the result
+   * next to what the live Realtime pipeline produced for the same audio, so
+   * the two can be compared directly for the same spoken content.
+   */
+  async abTestBatchTranscribe(segmentId, realtimeText, clipBuffer) {
+    const wav = pcm16ToWav(clipBuffer, TARGET_SAMPLE_RATE);
+    const form = new FormData();
+    form.append("file", new Blob([wav], { type: "audio/wav" }), `segment-${segmentId}.wav`);
+    form.append("model", TRANSCRIBE_MODEL);
+    if (this.sourceLang) form.append("language", this.sourceLang);
+
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: form,
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      console.error(`[AB TEST BATCH] segment=${segmentId} httpStatus=${res.status} error=${JSON.stringify(body)}`);
+      return;
+    }
+    console.log(
+      `[AB TEST BATCH] segment=${segmentId} clipDurationMs=${((clipBuffer.length / 2 / TARGET_SAMPLE_RATE) * 1000).toFixed(0)} ` +
+        `realtimeText="${realtimeText}" batchText="${body.text || ""}"`
+    );
   }
 
   /**

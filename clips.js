@@ -49,4 +49,4 @@ function deleteClip(id) {
   if (fs.existsSync(file)) fs.unlinkSync(file);
 }
 
-module.exports = { CLIPS_DIR, saveClip, deleteClip };
+module.exports = { CLIPS_DIR, saveClip, deleteClip, pcm16ToWav };
