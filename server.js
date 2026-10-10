@@ -616,7 +616,16 @@ class TranscriptionSession {
       //     the previous commit doesn't immediately trigger another
       //     near-empty one
       const MIN_CHUNK_MS = 600;
-      const MAX_CHUNK_MS = 3000; // TEMPORARY diagnostic value (was 6000) - see OVERLAP_MS below
+      // Was 6000 - lowered after an A/B test (one chunked through the
+      // Realtime pipeline, one sent as a single non-chunked request to the
+      // standard transcription endpoint for the exact same audio) showed
+      // content loss correlates with request duration regardless of
+      // delivery mechanism: single-sentence clips under ~6s transcribed
+      // perfectly every time (both ways), while 10s+ requests repeatedly
+      // cut off mid-sentence even with zero chunking/overlap/dedup
+      // involved. Keeping our own commits in that empirically-safe range
+      // sidesteps the degradation rather than compensating for it.
+      const MAX_CHUNK_MS = 3000;
       const QUIET_AMPLITUDE = 500; // out of 32767 (Int16 full scale)
       const QUIET_HOLD_MS = 450; // matches the old server_vad silence_duration_ms
       // Each forced (non-pause) commit lands at an essentially arbitrary
@@ -628,10 +637,12 @@ class TranscriptionSession {
       // just-committed audio again as the start of the next buffer gives
       // that boundary word full context in at least one chunk. See the
       // dedup logic in the delta handler for the text-side half of this.
-      // TEMPORARY diagnostic value (was 2500, paired with MAX_CHUNK_MS=6000) -
-      // dropped to 1000 together with the shorter MAX_CHUNK_MS above so this
-      // experiment isn't also independently testing "overlap as fraction of
-      // window", which would confound the result with extra dedup noise.
+      // Kept modest relative to the now-shorter MAX_CHUNK_MS above (was
+      // pushed to 2500 at one point, but that was specifically to
+      // compensate for 6s windows - at a 3s window it would be 1000+ms of
+      // every single commit, which just means more duplicate text for
+      // dedup to resolve and more chances for it to mis-resolve, as seen
+      // with "four or five" vs. "three, four, five" during testing).
       const OVERLAP_MS = 1000;
 
       this.forceCommitTimer = setInterval(() => {
