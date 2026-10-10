@@ -34,6 +34,12 @@ class CaptureService : Service() {
         private const val CHANNEL_ID = "diubi_poc_capture"
         private const val SAMPLE_RATE = 44100
         private const val MAX_DUMP_BYTES = 10 * 1024 * 1024 // cap the raw dump at 10MB
+
+        // Read by MainActivity's polling loop so the live RMS shows up
+        // directly on screen - no adb/Logcat needed to confirm capture
+        // is working. Service and Activity share the same process here.
+        @Volatile var lastRms: Double = 0.0
+        @Volatile var bufferCount: Long = 0
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -116,6 +122,8 @@ class CaptureService : Service() {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read > 0) {
                     val rms = rmsOf(buffer, read)
+                    lastRms = rms
+                    bufferCount++
                     Log.d(TAG, "buffer samples=$read rms=${"%.4f".format(rms)}")
 
                     if (bytesWritten < MAX_DUMP_BYTES) {
@@ -148,6 +156,7 @@ class CaptureService : Service() {
         audioRecord?.stop()
         audioRecord?.release()
         mediaProjection?.stop()
+        lastRms = 0.0
         super.onDestroy()
     }
 }
