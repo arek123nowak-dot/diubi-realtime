@@ -495,7 +495,18 @@ class TranscriptionSession {
     // transcribing it).
     this.pendingCommitWindows = [];
     this.itemAudioWindows = new Map();
-    this.textBufferStartItemId = null;
+    // Ordered record of which item_id contributed each span of textBuffer's
+    // current content — {itemId, text}[], always covering textBuffer
+    // exactly (concatenating every .text gives textBuffer back). Replaces a
+    // single textBufferStartItemId scalar, which broke in two confirmed
+    // ways: (1) when one feedSentenceText call produced more than one
+    // complete sentence, every sentence after the first reused the FIRST
+    // sentence's start item; (2) an item whose entire dedup-resolved
+    // content was "" (pure overlap duplicate) hit the `if (!text) return`
+    // guard and never touched the scalar at all, leaving it stuck on
+    // whatever item set it last. See captureClip() for how this is walked
+    // to find each sentence's true start item.
+    this.textBufferContributions = [];
     // Audio the client sends before the OpenAI connection finishes its
     // handshake used to be silently dropped, which lost the first couple
     // seconds of a video that starts autoplaying the instant it's loaded.
@@ -715,6 +726,7 @@ class TranscriptionSession {
           this.emitSentence(this.textBuffer);
           this.textBuffer = "";
           this.textBufferStartedAt = null;
+          this.textBufferContributions = [];
         }
       }, 2000);
 
@@ -935,9 +947,9 @@ class TranscriptionSession {
    * from before the overlap work. */
   feedSentenceText(text, itemId) {
     if (!text) return;
+    let toAppend = text;
     if (!this.textBuffer) {
       this.textBufferStartedAt = Date.now();
-      this.textBufferStartItemId = itemId || null;
     } else if (itemId !== this.lastFedItemId && !/\s$/.test(this.textBuffer) && !/^\s/.test(text)) {
       // Crossing into a new item's text while textBuffer still holds an
       // unfinished sentence from the previous one - OpenAI's first delta
@@ -948,23 +960,36 @@ class TranscriptionSession {
       // to exactly this item-boundary crossing - never between two deltas
       // of the SAME item, where a missing space is often intentional
       // (e.g. "Open" + "AI" -> "OpenAI").
-      this.textBuffer += " ";
+      toAppend = " " + text;
     }
     this.lastFedItemId = itemId;
-    this.textBuffer += text;
+    this.textBuffer += toAppend;
+    this.textBufferContributions.push({ itemId, text: toAppend });
+
     const { sentences, remainder } = splitCompleteSentences(this.textBuffer);
+    const completeLen = this.textBuffer.length - remainder.length;
+    let searchFrom = 0;
     for (const sentence of sentences) {
-      this.emitSentence(sentence, itemId);
+      // Sentences lose their exact offsets once splitCompleteSentences
+      // re-splits/trims them - indexOf recovers each one's true starting
+      // position in textBuffer so it can be mapped back to the item that
+      // actually contributed that point, instead of all sentences from
+      // this call sharing one guess (the bug this replaces).
+      const idx = this.textBuffer.indexOf(sentence, searchFrom);
+      const startOffset = idx >= 0 ? idx : searchFrom;
+      const startItemId = itemIdAtOffset(this.textBufferContributions, startOffset);
+      this.emitSentence(sentence, itemId, startItemId);
+      searchFrom = startOffset + sentence.length;
     }
     this.textBuffer = remainder;
+    this.textBufferContributions = consumeContributions(this.textBufferContributions, completeLen);
     if (!this.textBuffer) {
       this.textBufferStartedAt = null;
-      this.textBufferStartItemId = null;
     }
   }
 
   /** Filters and forwards one sentence-sized chunk of transcript, same checks as before, just now called once per sentence instead of once per whole VAD turn. */
-  emitSentence(text, endItemId) {
+  emitSentence(text, endItemId, startItemId) {
     const trimmed = text.trim();
     // Single-character transcripts are almost always ASR noise from a
     // spurious VAD-triggered segment (silence, breath, background hum).
@@ -972,7 +997,7 @@ class TranscriptionSession {
       const segmentId = ++this.segmentCounter;
       sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
       this.translate(trimmed, segmentId);
-      this.captureClip(segmentId, trimmed, endItemId);
+      this.captureClip(segmentId, trimmed, startItemId, endItemId);
     }
   }
 
@@ -990,15 +1015,18 @@ class TranscriptionSession {
    * at real sessions and see whether it's actually landing on the right
    * audio before trusting it further.
    */
-  captureClip(segmentId, text, endItemId) {
+  captureClip(segmentId, text, startItemId, endItemId) {
     const MAX_CLIP_SEGMENTS = 80;
     const now = Date.now();
 
     // Prefer REAL audio windows on both ends (see pendingCommitWindows/
     // itemAudioWindows) — we control commit timing ourselves, so these are
     // actual timestamps, not guesses:
-    //   - start: the window of the commit whose audio produced this
-    //     sentence's FIRST delta (textBufferStartItemId).
+    //   - start: the window of the commit whose audio produced the character
+    //     THIS sentence actually starts at (startItemId, resolved per-sentence
+    //     in feedSentenceText via textBufferContributions - not a single
+    //     session-wide scalar, which previously let a later sentence reuse an
+    //     earlier one's start item; see the constructor comment).
     //   - end: the window of the commit whose audio produced the delta that
     //     completed the sentence (endItemId, passed in from emitSentence).
     // Small safety margins only, since these are accurate now - our commits
@@ -1008,12 +1036,27 @@ class TranscriptionSession {
     // reliably overshot into the next sentence once the start side got
     // precise enough to expose it - confirmed in testing: clips starting
     // correctly but running a few seconds past where the saved sentence
-    // actually ends. Falls back to the old heuristic only if we somehow
-    // never got a window for the relevant item - e.g. right at session
-    // start before any commit has been acknowledged yet.
-    const startWindow = this.textBufferStartItemId ? this.itemAudioWindows.get(this.textBufferStartItemId) : null;
+    // actually ends.
+    const startWindow = startItemId ? this.itemAudioWindows.get(startItemId) : null;
     const endWindow = endItemId ? this.itemAudioWindows.get(endItemId) : null;
     const usingRealWindow = Boolean(startWindow && endWindow);
+
+    // Fail closed: startItemId says exactly which item this sentence should
+    // start at, but if that item's window already fell out of
+    // itemAudioWindows (long session, MAX_TRACKED_ITEMS eviction) we can no
+    // longer verify where the audio actually starts - attaching a clip built
+    // from a guess is exactly the wrong-sentence-audio failure this is
+    // fixing, so skip the clip entirely rather than silently mis-attaching
+    // one. The time-based fallback below stays only for startItemId itself
+    // being null/undefined - the one legitimate case (the idle-flush safety
+    // net in start() calls emitSentence with no item at all for a stuck
+    // fragment that never got a sentence boundary).
+    if (startItemId && !startWindow) {
+      console.log(
+        `[CLIP CAPTURE] segment=${segmentId} text="${text}" skipped: startItemId=${startItemId} has no known window (evicted or unresolved)`
+      );
+      return;
+    }
     const windowStart = startWindow ? startWindow.start - 300 : (this.textBufferStartedAt || now) - 4000;
     const windowEnd = endWindow ? endWindow.end + 300 : now + 2000;
 
@@ -1324,6 +1367,39 @@ function splitCompleteSentences(text) {
     .map((s) => s.trim())
     .filter(Boolean);
   return { sentences, remainder };
+}
+
+/** Finds which item_id contributed the character at `offset` within the
+ * textBuffer that `contributions` ({itemId, text}[]) represents - used to
+ * find a sentence's true start item instead of assuming the whole buffer
+ * has one owner. Offset at/past the end falls back to the last
+ * contribution, which only matters for an edge case (offset === full
+ * length) that normal sentence-start lookups never hit. */
+function itemIdAtOffset(contributions, offset) {
+  let pos = 0;
+  for (const c of contributions) {
+    pos += c.text.length;
+    if (offset < pos) return c.itemId;
+  }
+  return contributions.length ? contributions[contributions.length - 1].itemId : null;
+}
+
+/** Drops/trims `contributions` entries fully covered by the first
+ * `consumedLen` characters (the part just split off into complete
+ * sentences), keeping only what's still unconsumed in textBuffer's
+ * remainder - the per-item equivalent of `textBuffer = remainder`. */
+function consumeContributions(contributions, consumedLen) {
+  let pos = 0;
+  const kept = [];
+  for (const c of contributions) {
+    const end = pos + c.text.length;
+    if (end > consumedLen) {
+      const sliceStart = Math.max(0, consumedLen - pos);
+      kept.push(sliceStart > 0 ? { itemId: c.itemId, text: c.text.slice(sliceStart) } : c);
+    }
+    pos = end;
+  }
+  return kept;
 }
 
 /** Splits `text` into `{ word, start, end }` tokens on whitespace, keeping
