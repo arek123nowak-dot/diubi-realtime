@@ -88,6 +88,14 @@ zgaszonym ekranie.
 Żeby zmienić zapisany adres serwera później: Ustawienia systemowe >
 Aplikacje > DIUBI > Pamięć > Wyczyść dane, potem uruchom appkę ponownie.
 
+## Udostępnianie linku z YouTube/Spotify
+
+Zamiast kopiować link ręcznie: w appce YouTube (lub przeglądarce) stuknij
+"Udostępnij" przy filmie i wybierz **DIUBI** z listy - appka wczyta link
+automatycznie i od razu zacznie ładować film, tak jakby wklejono go w
+pole adresu. Działa przez standardowy intent `ACTION_SEND` (patrz
+`AndroidManifest.xml` i `diubiSetSourceUrl()` w `public/app.js`).
+
 ## Czego to NIE rozwiązuje jeszcze
 
 - Appka nie ma ikony/onboardingu/postaci Diubi - to czysty, funkcjonalny

@@ -744,6 +744,20 @@ function diubiCaptureError(message) {
   startBtn.disabled = false;
 }
 
+// Called from android-app/'s MainActivity when the user shares a link
+// ("Udostepnij") from the YouTube app, a browser, etc. straight into DIUBI,
+// instead of copy-pasting it into sourceUrlInput by hand. `text` is the raw
+// shared text - often has extra words around the link - which is fine,
+// extractYouTubeId() already searches anywhere in the string, not just at
+// the start.
+function diubiSetSourceUrl(text) {
+  const platform = /spotify\.com/i.test(text) ? "spotify" : "youtube";
+  const btn = Array.from(sourceBtns).find((b) => b.dataset.platform === platform);
+  if (btn) btn.click(); // reuses the existing handler: selects platform, shows the input row, sets the placeholder
+  sourceUrlInput.value = text.trim();
+  loadSource();
+}
+
 function arrayBufferToBase64(buffer) {
   let binary = "";
   const bytes = new Uint8Array(buffer);

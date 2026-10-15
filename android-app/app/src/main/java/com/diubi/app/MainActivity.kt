@@ -28,6 +28,12 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
 
+    // Set when a share (e.g. "Udostepnij" on a YouTube video -> DIUBI) comes
+    // in before the page has finished loading - diubiSetSourceUrl() isn't
+    // defined yet at that point, so it's flushed from onPageFinished instead.
+    private var pendingSharedText: String? = null
+    private var pageLoaded = false
+
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -64,7 +70,12 @@ class MainActivity : AppCompatActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
-        webView.webViewClient = WebViewClient()
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                pageLoaded = true
+                flushPendingSharedText()
+            }
+        }
         // Surfaces page-side console.log/console.error (and JS exceptions
         // thrown by our evaluateJavascript-injected calls) to Logcat - the
         // WebView swallows these silently otherwise. Filter Logcat on
@@ -90,6 +101,35 @@ class MainActivity : AppCompatActivity() {
         } else {
             showServerUrlDialog()
         }
+
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    // "Udostepnij" a YouTube (or Spotify) link from another app straight
+    // into DIUBI, instead of having to copy-paste it into the URL field by
+    // hand. See the ACTION_SEND intent-filter on this activity in the
+    // manifest.
+    private fun handleIncomingIntent(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND || intent.type != "text/plain") return
+        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        pendingSharedText = sharedText
+        if (pageLoaded) flushPendingSharedText()
+    }
+
+    private fun flushPendingSharedText() {
+        val text = pendingSharedText ?: return
+        pendingSharedText = null
+        // extractYouTubeId() in public/app.js searches anywhere in the
+        // string, so raw share text (which often has extra words around the
+        // link) works fine without trimming it down here first.
+        val escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        webView.evaluateJavascript("diubiSetSourceUrl('$escaped')", null)
     }
 
     private fun showServerUrlDialog() {
