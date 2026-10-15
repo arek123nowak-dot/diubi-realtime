@@ -798,10 +798,26 @@ function setStatus(text, isError = false) {
 function getUserId() {
   let id = localStorage.getItem("diubi_user_id");
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateUuid();
     localStorage.setItem("diubi_user_id", id);
   }
   return id;
+}
+
+// crypto.randomUUID() is only exposed in secure contexts (https:// or
+// localhost) - throws on the native Android host, which loads the page
+// over plain http://<lan-ip> during local dev (see android-app/). Good
+// enough for an anonymous per-device id; not used for anything
+// security-sensitive.
+function generateUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 function currentSourceMeta() {
