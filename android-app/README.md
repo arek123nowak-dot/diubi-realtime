@@ -54,7 +54,11 @@ kontekście" (`https://` albo `localhost`), a WebView ładuje appkę przez
 zwykłe `http://<lan-ip>` podczas lokalnych testów. Naprawione fallbackiem
 w `public/app.js` (`generateUuid()`).
 
-Jeszcze nieprzetestowane w tej rundzie: tłumaczenie, zapis frazy do
+**"Udostępnij" z YouTube POTWIERDZONE** - cała sesja (69s, 26 segmentów,
+transkrypcja + tłumaczenie na żywo) uruchomiona przez udostępnienie filmu
+wprost z appki YouTube, zachowanie identyczne jak na desktopie.
+
+Jeszcze nieprzetestowane w tej rundzie: zapis frazy do
 Pamiętnika, odtworzenie klipu w Powtórce, przycisk Stop, zachowanie przy
 zgaszonym ekranie.
 
