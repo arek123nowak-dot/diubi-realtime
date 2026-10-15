@@ -1,0 +1,123 @@
+package com.diubi.app
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.EditText
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+
+// Thin native shell: a full-screen WebView showing the existing DIUBI web
+// app (zero changes needed there beyond the small bridge in public/app.js),
+// plus the native MediaProjection audio capture a browser can't do on
+// Android. The web app drives everything else exactly as it already does
+// on desktop - Pamietnik, Powtorka, Moja nauka, confidence warnings.
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val projectionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                CaptureService.onAudioChunk = { base64 ->
+                    runOnUiThread { webView.evaluateJavascript("diubiFeedAudioChunk('$base64')", null) }
+                }
+                val intent = Intent(this, CaptureService::class.java).apply {
+                    putExtra(CaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(CaptureService.EXTRA_RESULT_DATA, result.data)
+                }
+                ContextCompat.startForegroundService(this, intent)
+                runOnUiThread { webView.evaluateJavascript("diubiCaptureStarted()", null) }
+            } else {
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "diubiCaptureError('Brak zgody na przechwytywanie dzwieku.')",
+                        null
+                    )
+                }
+            }
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        webView = WebView(this)
+        webView.layoutParams =
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        setContentView(webView)
+
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.settings.mediaPlaybackRequiresUserGesture = false
+        webView.webViewClient = WebViewClient()
+        webView.addJavascriptInterface(JsBridge(), "DiubiNative")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val savedUrl = ServerConfig.getUrl(this)
+        if (savedUrl != null) {
+            webView.loadUrl(savedUrl)
+        } else {
+            showServerUrlDialog()
+        }
+    }
+
+    private fun showServerUrlDialog() {
+        val input = EditText(this)
+        input.hint = "np. http://192.168.1.23:3000"
+        AlertDialog.Builder(this)
+            .setTitle("Adres serwera DIUBI")
+            .setMessage(
+                "Podaj adres, pod ktorym dziala serwer Node.js - lokalny adres IP " +
+                    "komputera w tej samej sieci Wi-Fi podczas testow, albo adres " +
+                    "wdrozenia (Render) pozniej."
+            )
+            .setView(input)
+            .setCancelable(false)
+            .setPositiveButton("OK") { _, _ ->
+                val url = input.text.toString().trim()
+                if (url.isNotEmpty()) {
+                    ServerConfig.setUrl(this, url)
+                    webView.loadUrl(url)
+                } else {
+                    showServerUrlDialog()
+                }
+            }
+            .show()
+    }
+
+    inner class JsBridge {
+        @JavascriptInterface
+        fun requestAudioCapture() {
+            runOnUiThread {
+                val projectionManager =
+                    getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+            }
+        }
+
+        @JavascriptInterface
+        fun stopAudioCapture() {
+            stopService(Intent(this@MainActivity, CaptureService::class.java))
+        }
+    }
+
+    override fun onDestroy() {
+        stopService(Intent(this, CaptureService::class.java))
+        super.onDestroy()
+    }
+}

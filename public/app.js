@@ -430,6 +430,17 @@ async function start(options = {}) {
   captureReady = false;
   startBtn.disabled = true;
 
+  // Running inside the native Android host (see android-app/) - it has no
+  // tab/screen to getDisplayMedia() from, so audio comes from its own
+  // MediaProjection capture instead, fed in via diubiFeedAudioChunk().
+  // openSocket() happens once native confirms capture actually started
+  // (diubiCaptureStarted below), not optimistically here.
+  if (window.DiubiNative && typeof window.DiubiNative.requestAudioCapture === "function") {
+    setStatus("Proszę o zgode na przechwytywanie dzwieku...");
+    window.DiubiNative.requestAudioCapture();
+    return;
+  }
+
   // getDisplayMedia's own permission is still live (Stop no longer releases
   // it, see stop() below) — reuse it instead of re-prompting. Chrome has no
   // "remember this" option for tab/screen capture (unlike mic/camera) by
@@ -497,7 +508,12 @@ function openSocket() {
 
   ws.onopen = () => {
     setStatus("Polaczono. Uruchamiam przechwytywanie audio...");
-    startCapture();
+    // Native host already has its own MediaProjection capture running by
+    // the time this fires (see diubiCaptureStarted) - no getDisplayMedia
+    // audio graph to wire up here, audio arrives via diubiFeedAudioChunk.
+    if (!(window.DiubiNative && typeof window.DiubiNative.requestAudioCapture === "function")) {
+      startCapture();
+    }
     stopBtn.disabled = false;
   };
 
@@ -685,6 +701,27 @@ function startCapture() {
   processorNode.connect(audioContext.destination);
 }
 
+// Entry points called from android-app/'s native capture service via
+// WebView.evaluateJavascript() - the native-host equivalent of the
+// getDisplayMedia()/ScriptProcessor path above. Sends the exact same
+// {type:"audio_chunk"} message over the exact same `ws`, so the server
+// (and every downstream feature - Pamietnik, Powtorka, confidence
+// warnings...) sees no difference between a browser tab and a phone.
+function diubiFeedAudioChunk(base64) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "audio_chunk", audio: base64 }));
+  }
+}
+
+function diubiCaptureStarted() {
+  openSocket();
+}
+
+function diubiCaptureError(message) {
+  setStatus(message, true);
+  startBtn.disabled = false;
+}
+
 function arrayBufferToBase64(buffer) {
   let binary = "";
   const bytes = new Uint8Array(buffer);
@@ -696,6 +733,9 @@ function stop() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "stop" }));
     ws.close();
+  }
+  if (window.DiubiNative && typeof window.DiubiNative.stopAudioCapture === "function") {
+    window.DiubiNative.stopAudioCapture();
   }
   // Deliberately NOT stopAllTracks() here — tearing down the capture would
   // force a fresh getDisplayMedia() picker on the next Start (Chrome never
