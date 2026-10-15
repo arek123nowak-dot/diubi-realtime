@@ -7,8 +7,11 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -62,6 +65,19 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
         webView.webViewClient = WebViewClient()
+        // Surfaces page-side console.log/console.error (and JS exceptions
+        // thrown by our evaluateJavascript-injected calls) to Logcat - the
+        // WebView swallows these silently otherwise. Filter Logcat on
+        // "DiubiWebView" while debugging the native bridge.
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                Log.d(
+                    "DiubiWebView",
+                    "${message.message()} (${message.sourceId()}:${message.lineNumber()})"
+                )
+                return true
+            }
+        }
         webView.addJavascriptInterface(JsBridge(), "DiubiNative")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

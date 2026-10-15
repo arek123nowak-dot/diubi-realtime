@@ -436,6 +436,7 @@ async function start(options = {}) {
   // openSocket() happens once native confirms capture actually started
   // (diubiCaptureStarted below), not optimistically here.
   if (window.DiubiNative && typeof window.DiubiNative.requestAudioCapture === "function") {
+    console.log("[DIUBI native] start(): requesting native audio capture");
     setStatus("Proszę o zgode na przechwytywanie dzwieku...");
     window.DiubiNative.requestAudioCapture();
     return;
@@ -504,9 +505,12 @@ function openSocket() {
   const target = encodeURIComponent(targetLangInput.value.trim() || "pl");
   const user = encodeURIComponent(getUserId());
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/stream?target=${target}&user=${user}`);
+  const wsUrl = `${proto}://${location.host}/stream?target=${target}&user=${user}`;
+  console.log("[DIUBI native] openSocket(): connecting to", wsUrl);
+  ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    console.log("[DIUBI native] ws.onopen");
     setStatus("Polaczono. Uruchamiam przechwytywanie audio...");
     // Native host already has its own MediaProjection capture running by
     // the time this fires (see diubiCaptureStarted) - no getDisplayMedia
@@ -522,9 +526,13 @@ function openSocket() {
     handleServerMessage(msg);
   };
 
-  ws.onerror = () => setStatus("Blad polaczenia WebSocket.", true);
+  ws.onerror = (event) => {
+    console.error("[DIUBI native] ws.onerror", event);
+    setStatus("Blad polaczenia WebSocket.", true);
+  };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    console.log("[DIUBI native] ws.onclose code=", event.code, "reason=", event.reason);
     // Don't bury a just-shown reason (daily limit hit, missing API key...)
     // under a generic "connection closed" the moment the server closes the
     // socket right after sending it.
@@ -707,17 +715,31 @@ function startCapture() {
 // {type:"audio_chunk"} message over the exact same `ws`, so the server
 // (and every downstream feature - Pamietnik, Powtorka, confidence
 // warnings...) sees no difference between a browser tab and a phone.
+let loggedFirstNativeChunk = false;
+let loggedDroppedNativeChunk = false;
+
 function diubiFeedAudioChunk(base64) {
   if (ws && ws.readyState === WebSocket.OPEN) {
+    if (!loggedFirstNativeChunk) {
+      loggedFirstNativeChunk = true;
+      console.log("[DIUBI native] first diubiFeedAudioChunk sent, length=", base64.length);
+    }
     ws.send(JSON.stringify({ type: "audio_chunk", audio: base64 }));
+  } else if (!loggedDroppedNativeChunk) {
+    loggedDroppedNativeChunk = true;
+    console.warn("[DIUBI native] diubiFeedAudioChunk called but ws not open, readyState=", ws && ws.readyState);
   }
 }
 
 function diubiCaptureStarted() {
+  console.log("[DIUBI native] diubiCaptureStarted() called");
+  loggedFirstNativeChunk = false;
+  loggedDroppedNativeChunk = false;
   openSocket();
 }
 
 function diubiCaptureError(message) {
+  console.error("[DIUBI native] diubiCaptureError:", message);
   setStatus(message, true);
   startBtn.disabled = false;
 }
