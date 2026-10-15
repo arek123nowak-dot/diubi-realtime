@@ -41,10 +41,22 @@ bo z punktu widzenia serwera i reszty strony nic się nie zmieniło poza
 
 ## Status
 
-**Zbudowane, nieprzetestowane w tym środowisku** (sandbox bez Android
-SDK/telefonu - identyczne ograniczenie jak przy POC). Kod jest gotowy do
-otwarcia w Android Studio i testu na realnym telefonie, dokładnie tak jak
-`research/mobile-audio-poc/android/`.
+**Przepływ end-to-end POTWIERDZONY na realnym telefonie (2026-10-15)** -
+Realme 11 Pro+ 5G (Android 15). Start → systemowy dialog MediaProjection
+→ `CaptureService` → most JS → WebSocket → serwer → transkrypcja na żywo
+widoczna w appce. Dokładnie ten scenariusz, o który chodziło: appka na
+pierwszym planie, źródło audio w pełni w tle.
+
+Po drodze znaleziony i naprawiony jeden realny bug (nie w moście audio -
+tam wszystko zadziałało za pierwszym razem): `crypto.randomUUID()` w
+`getUserId()` rzucał wyjątkiem, bo jest dostępne tylko w "bezpiecznym
+kontekście" (`https://` albo `localhost`), a WebView ładuje appkę przez
+zwykłe `http://<lan-ip>` podczas lokalnych testów. Naprawione fallbackiem
+w `public/app.js` (`generateUuid()`).
+
+Jeszcze nieprzetestowane w tej rundzie: tłumaczenie, zapis frazy do
+Pamiętnika, odtworzenie klipu w Powtórce, przycisk Stop, zachowanie przy
+zgaszonym ekranie.
 
 ## Uruchomienie
 
