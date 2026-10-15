@@ -9,6 +9,7 @@ const { getUsageMinutes, addUsageMs } = require("./usage");
 const { CLIPS_DIR, saveClip, deleteClip, pcm16ToWav } = require("./clips");
 const { listContent, upsertContent } = require("./userContent");
 const { getYouTubeCaptions } = require("./youtubeCaptions");
+const { searchYouTube, isConfigured: youtubeSearchConfigured } = require("./youtubeSearch");
 
 // Looked up by sessionId when a "Zapamietaj" click needs that segment's
 // audio clip — a REST request is stateless, so this is how POST
@@ -356,6 +357,28 @@ async function translateBatch(sentences, sourceLang, targetLang) {
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
   return results;
 }
+
+/**
+ * Lets the user search YouTube from inside DIUBI itself (tap the YouTube
+ * source button -> type a query -> tap a result) instead of having to
+ * leave the app for YouTube's own search and share a link back. Returns
+ * {available:false} rather than an error when no key is configured, same
+ * convention as /api/youtube-captions, so the client can fall back to the
+ * plain paste-a-link input.
+ */
+app.get("/api/youtube-search", async (req, res) => {
+  const q = (req.query.q || "").toString().trim();
+  if (!q) return res.status(400).json({ error: "Brak zapytania." });
+  if (!youtubeSearchConfigured()) return res.json({ available: false });
+
+  try {
+    const results = await searchYouTube(q);
+    res.json({ available: true, results });
+  } catch (err) {
+    console.error(`[YT SEARCH] query="${q}" failed: ${err.message}`);
+    res.status(502).json({ available: false, error: "Wyszukiwanie YouTube nie powiodlo sie." });
+  }
+});
 
 /**
  * YouTube's own caption track, translated up front - when available, this

@@ -14,6 +14,11 @@ const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const backToStartBtn = document.getElementById("backToStartBtn");
 const returnCard = document.getElementById("returnCard");
 const spotifyHint = document.getElementById("spotifyHint");
+const sourceSearchRow = document.getElementById("sourceSearchRow");
+const sourceSearchInput = document.getElementById("sourceSearchInput");
+const sourceSearchBtn = document.getElementById("sourceSearchBtn");
+const sourceSearchResults = document.getElementById("sourceSearchResults");
+const sourceSearchStatus = document.getElementById("sourceSearchStatus");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -106,8 +111,68 @@ sourceBtns.forEach((btn) => {
     // can change, so the only honest fix is telling people upfront instead
     // of letting it cut off mid-sentence with no explanation.
     spotifyHint.classList.toggle("visible", selectedPlatform === "spotify");
+    // Search-inside-DIUBI only exists for YouTube so far (see
+    // /api/youtube-search) - Spotify keeps the plain paste-a-link flow.
+    const showSearch = selectedPlatform === "youtube";
+    sourceSearchRow.classList.toggle("visible", showSearch);
+    sourceSearchResults.innerHTML = "";
+    sourceSearchStatus.textContent = "";
+    if (showSearch) sourceSearchInput.focus();
   });
 });
+
+sourceSearchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runYouTubeSearch();
+});
+sourceSearchBtn.addEventListener("click", runYouTubeSearch);
+
+async function runYouTubeSearch() {
+  const q = sourceSearchInput.value.trim();
+  if (!q) return;
+  sourceSearchResults.innerHTML = "";
+  sourceSearchStatus.textContent = "Szukam...";
+  try {
+    const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!data.available) {
+      sourceSearchStatus.textContent = "Wyszukiwanie niedostepne - wklej link ponizej.";
+      return;
+    }
+    if (!data.results || data.results.length === 0) {
+      sourceSearchStatus.textContent = "Brak wynikow.";
+      return;
+    }
+    sourceSearchStatus.textContent = "";
+    renderYouTubeSearchResults(data.results);
+  } catch {
+    sourceSearchStatus.textContent = "Wyszukiwanie nie powiodlo sie - wklej link ponizej.";
+  }
+}
+
+function renderYouTubeSearchResults(results) {
+  sourceSearchResults.innerHTML = "";
+  for (const r of results) {
+    const row = document.createElement("div");
+    row.className = "source-search-result";
+    row.innerHTML = `
+      <img src="${r.thumbnail}" alt="" />
+      <div class="ssr-text">
+        <div class="ssr-title"></div>
+        <div class="ssr-channel"></div>
+      </div>
+    `;
+    row.querySelector(".ssr-title").textContent = r.title;
+    row.querySelector(".ssr-channel").textContent = r.channelTitle;
+    row.addEventListener("click", () => {
+      sourceUrlInput.value = `https://www.youtube.com/watch?v=${r.videoId}`;
+      sourceSearchResults.innerHTML = "";
+      sourceSearchStatus.textContent = "";
+      sourceSearchInput.value = "";
+      loadSource();
+    });
+    sourceSearchResults.appendChild(row);
+  }
+}
 
 let playerIframe = null; // Spotify's plain iframe
 let playerPlatform = null;
@@ -219,6 +284,10 @@ function resetToStart() {
   sourceBtns.forEach((b) => b.classList.remove("selected"));
   sourceInputRow.classList.remove("visible");
   spotifyHint.classList.remove("visible");
+  sourceSearchRow.classList.remove("visible");
+  sourceSearchResults.innerHTML = "";
+  sourceSearchStatus.textContent = "";
+  sourceSearchInput.value = "";
 
   document.querySelector(".source-bar").style.display = "";
   sourceInputRow.style.display = "";

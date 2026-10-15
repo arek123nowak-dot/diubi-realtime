@@ -101,6 +101,65 @@
     flex: 1;
     width: auto;
   }
+  .source-search-row {
+    display: none;
+    gap: 8px;
+    width: 100%;
+    max-width: 900px;
+    margin-top: 10px;
+  }
+  .source-search-row.visible { display: flex; }
+  .source-search-row input { flex: 1; width: auto; }
+  .source-search-results {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+    max-width: 900px;
+    margin-top: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .source-search-result {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .source-search-result:hover { border-color: var(--accent); }
+  .source-search-result img {
+    width: 100px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .source-search-result .ssr-text { min-width: 0; }
+  .source-search-result .ssr-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .source-search-result .ssr-channel {
+    font-size: 0.72rem;
+    opacity: 0.65;
+    margin-top: 2px;
+  }
+  .source-search-status {
+    width: 100%;
+    max-width: 900px;
+    margin-top: 6px;
+    font-size: 0.78rem;
+    opacity: 0.7;
+  }
   .player-wrap {
     display: none;
     width: 100%;
@@ -521,8 +580,15 @@
     <button class="source-btn" data-platform="podcast" disabled title="Wkrotce"><span class="dot"></span>Podcast (RSS)</button>
   </div>
 
+  <div class="source-search-row" id="sourceSearchRow">
+    <input id="sourceSearchInput" placeholder="Szukaj na YouTube..." />
+    <button id="sourceSearchBtn">Szukaj</button>
+  </div>
+  <div class="source-search-results" id="sourceSearchResults"></div>
+  <p class="source-search-status" id="sourceSearchStatus"></p>
+
   <div class="source-input-row" id="sourceInputRow">
-    <input id="sourceUrlInput" placeholder="Wklej link do odcinka/filmu..." />
+    <input id="sourceUrlInput" placeholder="...albo wklej link do odcinka/filmu" />
     <button id="loadSourceBtn">Wczytaj</button>
   </div>
   <p class="spotify-hint" id="spotifyHint">
