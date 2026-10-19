@@ -58,6 +58,10 @@ w `public/app.js` (`generateUuid()`).
 transkrypcja + tłumaczenie na żywo) uruchomiona przez udostępnienie filmu
 wprost z appki YouTube, zachowanie identyczne jak na desktopie.
 
+**Wyszukiwanie YouTube wewnątrz DIUBI POTWIERDZONE (2026-10-19)** -
+klucz `YOUTUBE_API_KEY` skonfigurowany, wyszukiwanie po nazwie i
+ładowanie wyniku działa na telefonie. Zero opuszczania appki.
+
 Jeszcze nieprzetestowane w tej rundzie: zapis frazy do
 Pamiętnika, odtworzenie klipu w Powtórce, przycisk Stop, zachowanie przy
 zgaszonym ekranie.
