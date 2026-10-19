@@ -15,6 +15,8 @@
     --muted: #8a92a3;
     --accent: #4f8cff;
     --error: #ff5a5a;
+    --success: #3fbf6f;
+    --amber: #e8b84f;
   }
   * { box-sizing: border-box; }
   body {
@@ -26,7 +28,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 16px 16px 24px;
+    padding: 16px 16px calc(84px + env(safe-area-inset-bottom));
   }
   h1 {
     font-size: 1.4rem;
@@ -298,8 +300,6 @@
      once connected, keep that space for the transcript instead. */
   body.compact .hint { max-height: 0; margin: 0; opacity: 0; overflow: hidden; }
 
-  #notebookBtn { background: #2a2f3a; color: var(--text); }
-
   /* Every word in the original-language column is individually clickable —
      hover darkens it and shows a small "Wyjasnij" hint above it (via
      word-badge, positioned in JS from the hovered word's own bounding
@@ -399,7 +399,6 @@
     box-shadow: inset 3px 0 0 #e8b84f;
   }
 
-  #treningBtn { background: #2a2f3a; color: var(--text); }
 
   /* Soft, dismissible nudge - never a modal, never pauses playback. See
      showTrainingBanner() / server.js notifyTrainingReadyIfDue(). */
@@ -516,8 +515,6 @@
   }
   .notebook-empty { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 20px 0; }
 
-  #mojaNaukaBtn { background: #2a2f3a; color: var(--text); }
-
   .back-to-start-btn {
     display: none;
     background: none;
@@ -620,91 +617,207 @@
     .return-card .rc-actions { flex-direction: row; width: 100%; }
     .return-card .rc-actions button { flex: 1; }
   }
+
+  /* ---------------------------------------------------------------------
+     Etap 01 - Fundament UX: bottom tab navigation + "Dla Ciebie"/"Postepy"
+     panels. The "Sluchaj" panel is everything that already existed before
+     this - moved under a tab, not rebuilt. Switching tabs never touches
+     the WebSocket/audio capture (see switchTab() in app.js), so listening
+     keeps running in the background exactly like the product brief asks.
+     ------------------------------------------------------------------- */
+  .tab-panel { display: none; width: 100%; max-width: 900px; }
+  .tab-panel.active { display: flex; flex-direction: column; align-items: center; }
+
+  .bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    z-index: 50;
+  }
+  .nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 0.66rem;
+    font-weight: 600;
+    padding: 6px 2px;
+    cursor: pointer;
+    border-radius: 10px;
+  }
+  .nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
+  .nav-btn.active { color: var(--accent); }
+
+  .home-greeting { font-size: 1.3rem; font-weight: 700; margin: 6px 0 16px; width: 100%; }
+  .home-card {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+  }
+  .home-card h3 { margin: 0 0 4px; font-size: 0.95rem; }
+  .home-card p { margin: 0 0 12px; color: var(--muted); font-size: 0.85rem; }
+  .home-card button { width: 100%; background: var(--accent); color: white; }
+  .home-card .hc-count { font-size: 1.8rem; font-weight: 700; color: var(--amber); margin: 0 0 2px; }
+  .home-stats { display: flex; gap: 14px; width: 100%; margin: 4px 0 18px; }
+  .home-stats .hs-item {
+    flex: 1;
+    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 8px;
+  }
+  .home-stats .hs-value { font-size: 1.5rem; font-weight: 700; }
+  .home-stats .hs-value.success { color: var(--success); }
+  .home-stats .hs-label { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+  .home-empty {
+    width: 100%;
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 36px 16px;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+  }
+  .home-empty button { margin-top: 14px; background: var(--accent); color: white; }
+  .home-more { display: flex; gap: 10px; width: 100%; }
+  .home-more button { flex: 1; background: #2a2f3a; color: var(--text); }
+
+  .progress-grid { display: flex; flex-wrap: wrap; gap: 14px; width: 100%; margin-top: 14px; }
+  .progress-grid .pg-item {
+    flex: 1;
+    min-width: 110px;
+    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 10px;
+  }
+  .progress-grid .pg-value { font-size: 1.7rem; font-weight: 700; }
+  .progress-grid .pg-value.success { color: var(--success); }
+  .progress-grid .pg-value.amber { color: var(--amber); }
+  .progress-grid .pg-label { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
 </style>
 </head>
 <body>
   <h1><img class="logo" src="logo.png" alt="DIUBI" />DIUBI — Understand The World</h1>
-  <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
-  <button id="backToStartBtn" class="back-to-start-btn">← Wroc do wyboru zrodla</button>
 
-  <div class="return-card" id="returnCard"></div>
+  <section class="tab-panel active" id="tabHome" data-tab="home">
+    <p class="home-greeting">Czesc! Co dzis zrozumiemy?</p>
 
-  <div class="source-bar">
-    <button class="source-btn" data-platform="youtube"><span class="dot"></span>YouTube</button>
-    <button class="source-btn" data-platform="spotify"><span class="dot"></span>Spotify</button>
-    <button class="source-btn" data-platform="facebook" disabled title="Wkrotce"><span class="dot"></span>Facebook</button>
-    <button class="source-btn" data-platform="podcast" disabled title="Wkrotce"><span class="dot"></span>Podcast (RSS)</button>
-  </div>
+    <div class="return-card" id="returnCard"></div>
 
-  <div class="source-search-row" id="sourceSearchRow">
-    <input id="sourceSearchInput" placeholder="Szukaj na YouTube..." />
-    <button id="sourceSearchBtn">Szukaj</button>
-  </div>
-  <div class="source-search-results" id="sourceSearchResults"></div>
-  <p class="source-search-status" id="sourceSearchStatus"></p>
+    <div id="homeTrainingCard"></div>
+    <div id="homeStats"></div>
 
-  <div class="source-input-row" id="sourceInputRow">
-    <input id="sourceUrlInput" placeholder="...albo wklej link do odcinka/filmu" />
-    <button id="loadSourceBtn">Wczytaj</button>
-  </div>
-  <p class="spotify-hint" id="spotifyHint">
-    ⚠ Bez zalogowania na konto Spotify Premium w widgecie ponizej, Spotify odtworzy tylko 30-sekundowy podglad
-    utworu/odcinka, nie cala tresc.
-  </p>
-
-  <div class="player-wrap" id="playerWrap"></div>
-
-  <div class="controls">
-    <div>
-      <label for="targetLang">Jezyk docelowy (tlumaczenie)</label>
-      <select id="targetLang">
-        <option value="pl" selected>Polski</option>
-        <option value="en">English</option>
-        <option value="es">Espanol</option>
-        <option value="de">Deutsch</option>
-        <option value="fr">Francais</option>
-        <option value="it">Italiano</option>
-        <option value="pt">Portugues</option>
-        <option value="nl">Nederlands</option>
-        <option value="sv">Svenska</option>
-        <option value="cs">Cestina</option>
-        <option value="ro">Romana</option>
-        <option value="uk">Ukrainska</option>
-        <option value="ru">Rosyjski</option>
-        <option value="tr">Turecki</option>
-        <option value="el">Greckie</option>
-        <option value="ar">Arabski</option>
-        <option value="hi">Hindi</option>
-        <option value="ja">Japonski</option>
-        <option value="ko">Koreanski</option>
-        <option value="zh">Chinski</option>
-      </select>
+    <div class="home-more">
+      <button id="powtorkaBtn">🔁 Powtórka</button>
+      <button id="mojaNaukaBtn">📚 Moja nauka</button>
     </div>
-    <button id="startBtn">Start</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <button id="notebookBtn">📖 Mój pamiętnik</button>
-    <button id="powtorkaBtn">🔁 Powtórka</button>
-    <button id="treningBtn">🎯 Trening</button>
-    <button id="mojaNaukaBtn">📚 Moja nauka</button>
-  </div>
+  </section>
 
-  <div class="training-banner" id="trainingBanner"></div>
-  <div id="status"></div>
+  <section class="tab-panel" id="tabListen" data-tab="listen">
+    <p class="subtitle">Wybierz skad leci audio, wklej link, i sluchaj z tlumaczeniem na zywo</p>
+    <button id="backToStartBtn" class="back-to-start-btn">← Wroc do wyboru zrodla</button>
 
-  <div class="reel-wrap">
-    <div class="reel-header">
-      <span>Oryginal</span>
-      <span>Tlumaczenie</span>
+    <div class="source-bar">
+      <button class="source-btn" data-platform="youtube"><span class="dot"></span>YouTube</button>
+      <button class="source-btn" data-platform="spotify"><span class="dot"></span>Spotify</button>
+      <button class="source-btn" data-platform="facebook" disabled title="Wkrotce"><span class="dot"></span>Facebook</button>
+      <button class="source-btn" data-platform="podcast" disabled title="Wkrotce"><span class="dot"></span>Podcast (RSS)</button>
     </div>
-    <div class="reel" id="reel"></div>
-  </div>
 
-  <p class="hint">
-    Zrodlowy jezyk wykrywany jest automatycznie — niezaleznie czy to hiszpanski, niemiecki czy angielski, wystarczy
-    ze podasz jezyk docelowy powyzej. Klikajac "Start" wybierz w oknie przegladarki <strong>te karte</strong> (zeby
-    zlapac dzwiek z osadzonego odtwarzacza powyzej) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio".
-    Zaznacz dowolne slowo lub fraze w lewej kolumnie (oryginal), aby zobaczyc jej wyjasnienie i zapisac do pamietnika.
-  </p>
+    <div class="source-search-row" id="sourceSearchRow">
+      <input id="sourceSearchInput" placeholder="Szukaj na YouTube..." />
+      <button id="sourceSearchBtn">Szukaj</button>
+    </div>
+    <div class="source-search-results" id="sourceSearchResults"></div>
+    <p class="source-search-status" id="sourceSearchStatus"></p>
+
+    <div class="source-input-row" id="sourceInputRow">
+      <input id="sourceUrlInput" placeholder="...albo wklej link do odcinka/filmu" />
+      <button id="loadSourceBtn">Wczytaj</button>
+    </div>
+    <p class="spotify-hint" id="spotifyHint">
+      ⚠ Bez zalogowania na konto Spotify Premium w widgecie ponizej, Spotify odtworzy tylko 30-sekundowy podglad
+      utworu/odcinka, nie cala tresc.
+    </p>
+
+    <div class="player-wrap" id="playerWrap"></div>
+
+    <div class="controls">
+      <div>
+        <label for="targetLang">Jezyk docelowy (tlumaczenie)</label>
+        <select id="targetLang">
+          <option value="pl" selected>Polski</option>
+          <option value="en">English</option>
+          <option value="es">Espanol</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Francais</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Portugues</option>
+          <option value="nl">Nederlands</option>
+          <option value="sv">Svenska</option>
+          <option value="cs">Cestina</option>
+          <option value="ro">Romana</option>
+          <option value="uk">Ukrainska</option>
+          <option value="ru">Rosyjski</option>
+          <option value="tr">Turecki</option>
+          <option value="el">Greckie</option>
+          <option value="ar">Arabski</option>
+          <option value="hi">Hindi</option>
+          <option value="ja">Japonski</option>
+          <option value="ko">Koreanski</option>
+          <option value="zh">Chinski</option>
+        </select>
+      </div>
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <div class="training-banner" id="trainingBanner"></div>
+    <div id="status"></div>
+
+    <div class="reel-wrap">
+      <div class="reel-header">
+        <span>Oryginal</span>
+        <span>Tlumaczenie</span>
+      </div>
+      <div class="reel" id="reel"></div>
+    </div>
+
+    <p class="hint">
+      Zrodlowy jezyk wykrywany jest automatycznie — niezaleznie czy to hiszpanski, niemiecki czy angielski, wystarczy
+      ze podasz jezyk docelowy powyzej. Klikajac "Start" wybierz w oknie przegladarki <strong>te karte</strong> (zeby
+      zlapac dzwiek z osadzonego odtwarzacza powyzej) i koniecznie zaznacz "Udostepnij dzwiek karty" / "Share tab audio".
+      Zaznacz dowolne slowo lub fraze w lewej kolumnie (oryginal), aby zobaczyc jej wyjasnienie i zapisac do pamietnika.
+    </p>
+  </section>
+
+  <section class="tab-panel" id="tabProgress" data-tab="progress">
+    <h2>📈 Postepy</h2>
+    <div id="progressContent"><p class="loading">Wczytuje...</p></div>
+  </section>
+
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="home"><span class="nav-icon">🏠</span>Dla Ciebie</button>
+    <button class="nav-btn" data-tab="listen"><span class="nav-icon">🎧</span>Słuchaj</button>
+    <button class="nav-btn" id="notebookBtn"><span class="nav-icon">🌍</span>Mój świat</button>
+    <button class="nav-btn" id="treningBtn"><span class="nav-icon">🎯</span>Trening</button>
+    <button class="nav-btn" data-tab="progress"><span class="nav-icon">📊</span>Postępy</button>
+  </nav>
 
   <script src="app.js"></script>
 </body>

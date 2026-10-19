@@ -21,6 +21,11 @@ const sourceSearchInput = document.getElementById("sourceSearchInput");
 const sourceSearchBtn = document.getElementById("sourceSearchBtn");
 const sourceSearchResults = document.getElementById("sourceSearchResults");
 const sourceSearchStatus = document.getElementById("sourceSearchStatus");
+const tabPanels = document.querySelectorAll(".tab-panel");
+const navBtns = document.querySelectorAll(".nav-btn[data-tab]");
+const homeTrainingCard = document.getElementById("homeTrainingCard");
+const homeStats = document.getElementById("homeStats");
+const progressContent = document.getElementById("progressContent");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
 const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
@@ -31,6 +36,7 @@ let processorNode = null;
 let sourceNode = null;
 let displayStream = null;
 let currentSessionId = null; // from the server's "ready" message — lets a saved phrase point back to its audio clip
+let sessionSavedCount = 0; // reset in openSocket(), shown in stop()'s end-of-session summary
 // Sent right before the server closes the socket (daily limit hit, missing
 // API key, etc). ws.onclose fires moments later and used to unconditionally
 // overwrite the status bar with a generic "connection closed" - burying the
@@ -570,6 +576,7 @@ function openSocket() {
   rows.clear();
   reelEl.innerHTML = "";
   lastErrorMessage = null;
+  sessionSavedCount = 0;
 
   // Source language is always auto-detected server-side — the user only
   // ever picks the target language they want to read.
@@ -861,6 +868,50 @@ function stop() {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   setStatus("Zatrzymano. Kliknij Start, by wznowic bez ponownego wyboru karty.");
+  if (sessionSavedCount > 0) showSessionSummary();
+}
+
+/** Point E from the product brief: ending a session shouldn't just go
+ * quiet - the user should know what they got out of it, and whether a
+ * training session is already waiting, instead of having to guess. Only
+ * shown when something was actually saved this session - an empty
+ * summary after a session with nothing saved would just be noise. */
+async function showSessionSummary() {
+  const savedCount = sessionSavedCount;
+  const overlay = openModal(`
+    <h2>Sesja zakonczona</h2>
+    <p class="review-prompt">Zapisales w tej sesji: <strong>${savedCount} ${savedCount === 1 ? "fraze" : "frazy"}</strong></p>
+    <p class="loading">Sprawdzam trening...</p>
+  `);
+  const card = overlay.querySelector(".modal-card");
+
+  let progress = null;
+  try {
+    const res = await fetch(`/api/training/progress?userId=${encodeURIComponent(getUserId())}`);
+    if (res.ok) progress = await res.json();
+  } catch {
+    // Falls through to the no-pending-data rendering below.
+  }
+
+  const pending = progress ? progress.fresh + progress.needsReview : 0;
+  card.innerHTML = `
+    <h2>Sesja zakonczona</h2>
+    <p class="review-prompt">Zapisales w tej sesji: <strong>${savedCount} ${savedCount === 1 ? "fraze" : "frazy"}</strong></p>
+    ${
+      pending > 0
+        ? `<p>Masz ${pending} ${pending === 1 ? "fraze" : "frazy"} gotowe do treningu.</p>
+           <div class="modal-actions">
+             <button class="btn-remember btn-summary-train">🎯 Zacznij trening</button>
+             <button class="btn-close">Zamknij</button>
+           </div>`
+        : `<div class="modal-actions"><button class="btn-close">Zamknij</button></div>`
+    }
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+  card.querySelector(".btn-summary-train")?.addEventListener("click", () => {
+    overlay.remove();
+    openTrening();
+  });
 }
 
 function stopAllTracks() {
@@ -1178,6 +1229,7 @@ async function saveToNotebook(phrase, contextSentence, explainData, segmentId, s
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  sessionSavedCount++;
 }
 
 function escapeHtml(str) {
@@ -1352,6 +1404,7 @@ function renderMojaNauka(card, items) {
  * of sync with the real one. */
 function continueContent(item) {
   if (!item.url) return;
+  switchTab("listen");
   selectedPlatform = item.source;
   sourceUrlInput.value = item.url;
   loadSource();
@@ -1396,6 +1449,108 @@ async function initReturnCard() {
 }
 
 initReturnCard();
+
+// ---------------------------------------------------------------------------
+// Etap 01 - Fundament UX: bottom tab navigation. Switching tabs is pure CSS
+// visibility (see .tab-panel.active) - it never touches the WebSocket or
+// the native audio capture, so listening keeps running if the user taps
+// over to check Trening/Postepy mid-session. That's the whole point: the
+// product brief wants training to surface during listening, not after it,
+// without ever interrupting playback.
+// ---------------------------------------------------------------------------
+
+function switchTab(tabName) {
+  tabPanels.forEach((p) => p.classList.toggle("active", p.dataset.tab === tabName));
+  navBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === tabName));
+  if (tabName === "home") renderHomeExtras();
+  if (tabName === "progress") renderProgressTab();
+}
+
+navBtns.forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+
+/** "Twoj dzisiejszy trening" card + the Zapisane/Opanowane stat tiles on
+ * the home screen - both read data that already exists (GET
+ * /api/training/progress), no new backend endpoint needed for this. Empty
+ * state for a brand new account points at Sluchaj instead of showing
+ * zeros nobody asked for yet. */
+async function renderHomeExtras() {
+  let progress;
+  try {
+    const res = await fetch(`/api/training/progress?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    progress = await res.json();
+  } catch {
+    homeTrainingCard.innerHTML = "";
+    homeStats.innerHTML = "";
+    return;
+  }
+
+  if (progress.total === 0) {
+    homeTrainingCard.innerHTML = `
+      <div class="home-empty">
+        <p>Jeszcze nic tu nie masz. Zacznij sluchac czegos ciekawego, a DIUBI zbierze z tego frazy do nauki.</p>
+        <button id="homeFindBtn">Znajdz material, ktory Cie interesuje</button>
+      </div>
+    `;
+    document.getElementById("homeFindBtn").addEventListener("click", () => switchTab("listen"));
+    homeStats.innerHTML = "";
+    return;
+  }
+
+  const pending = progress.fresh + progress.needsReview;
+  if (pending > 0) {
+    const minutesEst = Math.max(1, Math.round(pending * 0.4));
+    homeTrainingCard.innerHTML = `
+      <div class="home-card">
+        <h3>Twoj dzisiejszy trening</h3>
+        <div class="hc-count">${pending} ${pending === 1 ? "fraza" : "frazy"}</div>
+        <p>Czeka na utrwalenie · Okolo ${minutesEst} min</p>
+        <button id="homeTrainBtn">Rozpocznij trening</button>
+      </div>
+    `;
+    document.getElementById("homeTrainBtn").addEventListener("click", () => openTrening());
+  } else {
+    homeTrainingCard.innerHTML = "";
+  }
+
+  homeStats.innerHTML = `
+    <div class="home-stats">
+      <div class="hs-item"><div class="hs-value">${progress.total}</div><div class="hs-label">Zapisane frazy</div></div>
+      <div class="hs-item"><div class="hs-value success">${progress.mastered}</div><div class="hs-label">Opanowane</div></div>
+    </div>
+  `;
+}
+
+renderHomeExtras();
+
+/** Postepy tab: the same /api/training/progress data as the home card,
+ * just laid out as a small dashboard instead of a single nudge. */
+async function renderProgressTab() {
+  progressContent.innerHTML = `<p class="loading">Wczytuje...</p>`;
+  let progress;
+  try {
+    const res = await fetch(`/api/training/progress?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    progress = await res.json();
+  } catch (err) {
+    progressContent.innerHTML = `<p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  if (progress.total === 0) {
+    progressContent.innerHTML = `<p class="home-empty">Jeszcze nie masz zadnych fraz do sledzenia. Zacznij sluchac i zapisuj to, czego nie rozumiesz.</p>`;
+    return;
+  }
+
+  progressContent.innerHTML = `
+    <div class="progress-grid">
+      <div class="pg-item"><div class="pg-value amber">${progress.today.correct}/${progress.today.attempts}</div><div class="pg-label">Dzisiaj</div></div>
+      <div class="pg-item"><div class="pg-value success">${progress.mastered}</div><div class="pg-label">Opanowane</div></div>
+      <div class="pg-item"><div class="pg-value">${progress.needsReview}</div><div class="pg-label">Do powtorki</div></div>
+      <div class="pg-item"><div class="pg-value">${progress.fresh}</div><div class="pg-label">Nowe</div></div>
+    </div>
+  `;
+}
 
 // ---------------------------------------------------------------------------
 // Powtorka: active recall, not a passive list. The phrase comes up first,
