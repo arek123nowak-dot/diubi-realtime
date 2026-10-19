@@ -399,6 +399,62 @@
     box-shadow: inset 3px 0 0 #e8b84f;
   }
 
+  #treningBtn { background: #2a2f3a; color: var(--text); }
+
+  /* Soft, dismissible nudge - never a modal, never pauses playback. See
+     showTrainingBanner() / server.js notifyTrainingReadyIfDue(). */
+  .training-banner {
+    display: none;
+    border: 1px solid var(--accent);
+    background: #1a2230;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .training-banner.visible { display: flex; }
+  .training-banner .tb-text { font-size: 0.9rem; }
+  .training-banner .tb-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .training-banner button {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .training-banner .tb-start { background: var(--accent); color: white; }
+  .training-banner .tb-dismiss { background: #2a2f3a; color: var(--muted); }
+
+  .training-blank-sentence { font-size: 1.15rem; font-weight: 600; margin: 16px 0 4px; line-height: 1.5; }
+  .training-options { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .training-option {
+    text-align: left;
+    background: #1c2433;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  .training-option:hover:not([disabled]) { border-color: var(--accent); }
+  .training-option[disabled] { cursor: default; }
+  .training-option.correct { border-color: #3fbf6f; background: rgba(63, 191, 111, 0.15); }
+  .training-option.incorrect { border-color: #e05a5a; background: rgba(224, 90, 90, 0.15); }
+  .training-explanation {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: #1a2230;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .training-stats { display: flex; gap: 18px; margin: 16px 0; flex-wrap: wrap; }
+  .training-stat { text-align: center; }
+  .training-stat .ts-value { font-size: 1.6rem; font-weight: 700; }
+  .training-stat .ts-label { font-size: 0.75rem; color: var(--muted); }
+
   .review-progress { float: right; font-size: 0.75rem; color: var(--muted); font-weight: 400; }
   .review-prompt { color: var(--muted); font-size: 0.8rem; margin: 16px 0 2px; }
   .review-phrase { font-size: 1.5rem; font-weight: 700; margin: 0 0 6px; }
@@ -628,8 +684,11 @@
     <button id="stopBtn" disabled>Stop</button>
     <button id="notebookBtn">📖 Mój pamiętnik</button>
     <button id="powtorkaBtn">🔁 Powtórka</button>
+    <button id="treningBtn">🎯 Trening</button>
     <button id="mojaNaukaBtn">📚 Moja nauka</button>
   </div>
+
+  <div class="training-banner" id="trainingBanner"></div>
   <div id="status"></div>
 
   <div class="reel-wrap">

@@ -4,8 +4,9 @@ const crypto = require("node:crypto");
 const express = require("express");
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
-const { listPhrases, addPhrase, deletePhrase } = require("./store");
+const { listPhrases, addPhrase, updatePhrase, deletePhrase } = require("./store");
 const { getUsageMinutes, addUsageMs } = require("./usage");
+const { logAttempt, getTodayStats } = require("./trainingLog");
 const { CLIPS_DIR, saveClip, deleteClip, pcm16ToWav } = require("./clips");
 const { listContent, upsertContent } = require("./userContent");
 const { getYouTubeCaptions } = require("./youtubeCaptions");
@@ -24,6 +25,12 @@ const DEFAULT_SOURCE_LANG = process.env.SOURCE_LANG || ""; // empty = auto-detec
 const TRANSLATION_MODEL = process.env.TRANSLATION_MODEL || "gpt-4o-mini";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 const TARGET_SAMPLE_RATE = 24000; // GA API requires >= 24000; must match public/app.js
+// How many freshly-generated, not-yet-attempted Trening exercises pile up
+// before the live listening session gets one soft "your training is
+// ready" banner - see notifyTrainingReadyIfDue(). Low enough that a
+// focused listener sees it within a session, high enough it doesn't fire
+// after every single "Zapamietaj" click.
+const TRAINING_READY_THRESHOLD = 3;
 const PORT = process.env.PORT || 3000;
 // How many trailing words of the previous item's transcript the overlap-
 // dedup comparison considers - generous for ~1s of speech at any
@@ -207,7 +214,100 @@ app.post("/api/phrases", (req, res) => {
   }
 
   res.status(201).json(saved);
+
+  // Trening: turn this phrase into one fill-in-the-blank exercise in the
+  // background - never on the save response's critical path. Skipped for
+  // low-confidence transcriptions (see checkSentenceConfidence) and when
+  // there's no captured sentence to blank out, per the "don't build
+  // exercises on data we don't trust" rule from the product brief.
+  if (!lowConfidence && contextSentence) {
+    generateExercise(phrase, contextSentence, translation, saved.targetLang)
+      .then((exercise) => {
+        const updated = updatePhrase(userId, id, {
+          exercise,
+          exerciseStatus: "ready",
+          trainingStats: { attempts: 0, correct: 0, correctStreak: 0, mastered: false, lastResult: null, lastAttemptAt: null },
+        });
+        if (updated) notifyTrainingReadyIfDue(userId, session);
+      })
+      .catch((err) => {
+        console.error(`[TRENING] exercise generation failed for phrase="${phrase}": ${err.message}`);
+        updatePhrase(userId, id, { exerciseStatus: "skipped" });
+      });
+  }
 });
+
+/**
+ * Lists this user's Trening-ready phrases (fill-in-the-blank exercise
+ * already generated) for the client to build a session queue from -
+ * both freshly-generated ones and ones due for review.
+ */
+app.get("/api/training", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  res.json(listPhrases(userId).filter((p) => p.exerciseStatus === "ready" && p.exercise));
+});
+
+/**
+ * Records one answered Trening question: updates that phrase's own
+ * mastery state (two correct recalls in a row = mastered - see the
+ * "punkty za wiedze, nie za klikanie" rule) and today's running tally.
+ */
+app.post("/api/training/:id/attempt", (req, res) => {
+  const { userId, correct } = req.body || {};
+  if (!userId || typeof userId !== "string" || typeof correct !== "boolean") {
+    return res.status(400).json({ error: "Brak userId lub correct." });
+  }
+  const phrase = listPhrases(userId).find((p) => p.id === req.params.id);
+  if (!phrase) return res.status(404).json({ error: "Nie znaleziono." });
+
+  const prev = phrase.trainingStats || { attempts: 0, correct: 0, correctStreak: 0, mastered: false };
+  const correctStreak = correct ? (prev.correctStreak || 0) + 1 : 0;
+  const trainingStats = {
+    attempts: prev.attempts + 1,
+    correct: prev.correct + (correct ? 1 : 0),
+    correctStreak,
+    mastered: prev.mastered || correctStreak >= 2,
+    lastResult: correct ? "correct" : "incorrect",
+    lastAttemptAt: Date.now(),
+  };
+  const updated = updatePhrase(userId, req.params.id, { trainingStats });
+  logAttempt(userId, correct);
+  res.json({ trainingStats: updated.trainingStats });
+});
+
+/** Today's score plus a breakdown of the whole Trening set, for the
+ * summary screen at the end of a session. */
+app.get("/api/training/progress", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  const ready = listPhrases(userId).filter((p) => p.exerciseStatus === "ready" && p.exercise);
+  res.json({
+    today: getTodayStats(userId),
+    mastered: ready.filter((p) => p.trainingStats?.mastered).length,
+    needsReview: ready.filter((p) => p.trainingStats?.attempts > 0 && !p.trainingStats?.mastered).length,
+    fresh: ready.filter((p) => !p.trainingStats || p.trainingStats.attempts === 0).length,
+    total: ready.length,
+  });
+});
+
+/** Fires at most once per live session, the moment enough fresh exercises
+ * have piled up - a soft banner, not an interruption, see public/app.js
+ * showTrainingBanner(). */
+function notifyTrainingReadyIfDue(userId, session) {
+  if (!session || session.closed || session.trainingBannerShown) return;
+  const pending = listPhrases(userId).filter(
+    (p) => p.exerciseStatus === "ready" && (!p.trainingStats || p.trainingStats.attempts === 0)
+  ).length;
+  if (pending >= TRAINING_READY_THRESHOLD) {
+    session.trainingBannerShown = true;
+    sendJson(session.clientWs, { type: "training_ready", count: pending });
+  }
+}
 
 app.get("/api/content", (req, res) => {
   const userId = req.query.userId;
@@ -281,6 +381,65 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
     example: parsed.example || "",
     exampleTranslation: parsed.exampleTranslation || "",
     pronunciation: parsed.pronunciation || "",
+  };
+}
+
+/**
+ * Turns one saved Pamietnik phrase into a single Trening question: the
+ * real sentence the user heard it in, with the phrase blanked out, plus
+ * three multiple-choice options (one correct) and a short explanation.
+ * The caller skips this entirely for low-confidence transcriptions - see
+ * POST /api/phrases - so it never has to build a question on text we
+ * already know might be wrong.
+ */
+async function generateExercise(phrase, contextSentence, translation, targetLang) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: TRANSLATION_MODEL,
+      temperature: 0.4,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `Tworzysz jedno cwiczenie typu "uzupelnij luke" na podstawie zdania, ktore uczacy sie jezyka naprawde uslyszal. ` +
+            `Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown, bez komentarzy) z polami: ` +
+            `"blankedSentence" (podane zdanie z podana fraza zastapiona przez "_____", reszta zdania bez zmian), ` +
+            `"options" (tablica DOKLADNIE 3 stringow w jezyku oryginalnej frazy: jeden to poprawna fraza pasujaca do luki, ` +
+            `dwa to prawdopodobne, ale w tym kontekscie BLEDNE dystraktory o podobnej dlugosci i formie gramatycznej), ` +
+            `"correctIndex" (liczba 0-2, indeks poprawnej opcji w tablicy "options"), ` +
+            `"explanation" (jedno zdanie w jezyku ${targetLang} tlumaczace, dlaczego to poprawna odpowiedz w tym kontekscie).`,
+        },
+        {
+          role: "user",
+          content: `Fraza: "${phrase}"\nTlumaczenie frazy: "${translation}"\nZdanie: "${contextSentence}"`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "{}";
+  const parsed = JSON.parse(content);
+  const options = Array.isArray(parsed.options) ? parsed.options.slice(0, 3) : [];
+  if (options.length !== 3 || typeof parsed.correctIndex !== "number" || !parsed.blankedSentence) {
+    throw new Error("malformed exercise response from model");
+  }
+  return {
+    blankedSentence: parsed.blankedSentence,
+    options,
+    correctIndex: parsed.correctIndex,
+    explanation: parsed.explanation || "",
   };
 }
 
@@ -528,6 +687,11 @@ class TranscriptionSession {
     // and needs to survive long enough for a "Zapamietaj" save (same
     // lifetime/eviction policy as segmentClips).
     this.segmentConfidence = new Map();
+    // Set true the moment this session has shown its one "Trening gotowy"
+    // banner - see notifyTrainingReadyIfDue() - so a long listening
+    // session with many saved phrases gets a single soft nudge, not one
+    // every time the pending count ticks past the threshold again.
+    this.trainingBannerShown = false;
     // Real audio capture windows, keyed by the item_id OpenAI assigns to
     // each committed chunk — see the forceCommitTimer and the
     // input_audio_buffer.committed/delta handling below. This is what makes

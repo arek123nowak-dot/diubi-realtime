@@ -10,6 +10,8 @@ const loadSourceBtn = document.getElementById("loadSourceBtn");
 const playerWrap = document.getElementById("playerWrap");
 const notebookBtn = document.getElementById("notebookBtn");
 const powtorkaBtn = document.getElementById("powtorkaBtn");
+const treningBtn = document.getElementById("treningBtn");
+const trainingBanner = document.getElementById("trainingBanner");
 const mojaNaukaBtn = document.getElementById("mojaNaukaBtn");
 const backToStartBtn = document.getElementById("backToStartBtn");
 const returnCard = document.getElementById("returnCard");
@@ -677,6 +679,10 @@ function handleServerMessage(msg) {
       row.translationCell.classList.remove("active");
       row.translationCell.classList.add("failed");
       scrollToBottom();
+      break;
+    }
+    case "training_ready": {
+      showTrainingBanner(msg.count);
       break;
     }
   }
@@ -1550,4 +1556,167 @@ function renderReviewAnswer(card) {
   });
   wireReviewNav(card);
   wireClipAudioElements(card);
+}
+
+// ---------------------------------------------------------------------------
+// Trening: turns saved Pamietnik phrases into fill-in-the-blank questions -
+// multiple choice, immediate feedback, then a short progress summary. The
+// exercise itself is generated server-side right after "Zapamietaj" (see
+// server.js generateExercise()); this just presents what's already there
+// and records each answer. A soft "Trening gotowy" banner (never a modal,
+// never pauses listening) nudges the user in once enough pile up - see
+// showTrainingBanner() / server.js notifyTrainingReadyIfDue().
+// ---------------------------------------------------------------------------
+
+let trainingQueue = [];
+let trainingIndex = 0;
+let trainingSessionCorrect = 0;
+
+treningBtn.addEventListener("click", () => openTrening());
+
+function showTrainingBanner(count) {
+  trainingBanner.innerHTML = `
+    <span class="tb-text">🎯 Twoj trening jest gotowy (${count} ${count === 1 ? "fraza" : "frazy"})</span>
+    <div class="tb-actions">
+      <button class="tb-start">Zacznij</button>
+      <button class="tb-dismiss">Pozniej</button>
+    </div>
+  `;
+  trainingBanner.classList.add("visible");
+  trainingBanner.querySelector(".tb-start").addEventListener("click", () => {
+    hideTrainingBanner();
+    openTrening();
+  });
+  trainingBanner.querySelector(".tb-dismiss").addEventListener("click", hideTrainingBanner);
+}
+
+function hideTrainingBanner() {
+  trainingBanner.classList.remove("visible");
+  trainingBanner.innerHTML = "";
+}
+
+async function openTrening() {
+  const overlay = openModal(`<h2>🎯 Trening</h2><p class="loading">Wczytuje...</p>`);
+  const card = overlay.querySelector(".modal-card");
+
+  let phrases;
+  try {
+    const res = await fetch(`/api/training?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    phrases = await res.json();
+  } catch (err) {
+    card.innerHTML = `<h2>🎯 Trening</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  if (phrases.length === 0) {
+    card.innerHTML = `
+      <h2>🎯 Trening</h2>
+      <p class="notebook-empty">Jeszcze nie ma gotowych cwiczen. Zapisz kilka fraz z transkrypcji (⭐ Zapamietaj), a DIUBI przygotuje z nich trening.</p>
+      <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+    `;
+    card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    return;
+  }
+
+  // Phrases never answered correctly twice in a row (new, or still "needs
+  // review") come first - mastered ones are what Powtorka already keeps
+  // alive, Trening's job is closing gaps, not re-testing what's stuck.
+  const notMastered = phrases.filter((p) => !p.trainingStats?.mastered);
+  trainingQueue = shuffle(notMastered.length > 0 ? notMastered : phrases);
+  trainingIndex = 0;
+  trainingSessionCorrect = 0;
+  renderTrainingQuestion(card);
+}
+
+function renderTrainingQuestion(card) {
+  const p = trainingQueue[trainingIndex];
+  const ex = p.exercise;
+  card.innerHTML = `
+    <h2>🎯 Trening <span class="review-progress">${trainingIndex + 1} / ${trainingQueue.length}</span></h2>
+    <p class="review-prompt">Uzupelnij zdanie:</p>
+    <p class="training-blank-sentence">${escapeHtml(ex.blankedSentence)}</p>
+    ${phraseSrcTranslationHtml(p.sentenceTranslation)}
+    <div class="training-options">
+      ${ex.options.map((opt, i) => `<button class="training-option" data-index="${i}">${escapeHtml(opt)}</button>`).join("")}
+    </div>
+    <div class="modal-actions">
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelectorAll(".training-option").forEach((btn) => {
+    btn.addEventListener("click", () => handleTrainingAnswer(card, Number(btn.dataset.index)));
+  });
+}
+
+function handleTrainingAnswer(card, chosenIndex) {
+  const p = trainingQueue[trainingIndex];
+  const ex = p.exercise;
+  const correct = chosenIndex === ex.correctIndex;
+  if (correct) trainingSessionCorrect++;
+
+  card.querySelectorAll(".training-option").forEach((btn, i) => {
+    btn.disabled = true;
+    if (i === ex.correctIndex) btn.classList.add("correct");
+    else if (i === chosenIndex) btn.classList.add("incorrect");
+  });
+
+  if (ex.explanation) {
+    card
+      .querySelector(".training-options")
+      .insertAdjacentHTML("afterend", `<p class="training-explanation">${escapeHtml(ex.explanation)}</p>`);
+  }
+
+  const hasNext = trainingIndex + 1 < trainingQueue.length;
+  card.querySelector(".modal-actions").innerHTML = `
+    <button class="btn-remember btn-training-next">${hasNext ? "Dalej →" : "Zakoncz trening"}</button>
+    <button class="btn-close">Zamknij</button>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelector(".btn-training-next").addEventListener("click", () => {
+    if (hasNext) {
+      trainingIndex++;
+      renderTrainingQuestion(card);
+    } else {
+      renderTrainingSummary(card);
+    }
+  });
+
+  // Fire-and-forget - the next question doesn't wait on this.
+  fetch(`/api/training/${p.id}/attempt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: getUserId(), correct }),
+  }).catch(() => {});
+}
+
+async function renderTrainingSummary(card) {
+  card.innerHTML = `<h2>🎯 Trening</h2><p class="loading">Podliczam...</p>`;
+  let progress = null;
+  try {
+    const res = await fetch(`/api/training/progress?userId=${encodeURIComponent(getUserId())}`);
+    if (res.ok) progress = await res.json();
+  } catch {
+    // Session total below still renders even if the server-side tally fails.
+  }
+
+  card.innerHTML = `
+    <h2>🎯 Trening - podsumowanie</h2>
+    <p class="review-prompt">Ta sesja: ${trainingSessionCorrect} / ${trainingQueue.length} poprawnych</p>
+    ${
+      progress
+        ? `
+      <div class="training-stats">
+        <div class="training-stat"><div class="ts-value">${progress.today.correct}/${progress.today.attempts}</div><div class="ts-label">Dzisiaj</div></div>
+        <div class="training-stat"><div class="ts-value">${progress.mastered}</div><div class="ts-label">Opanowane</div></div>
+        <div class="training-stat"><div class="ts-value">${progress.needsReview}</div><div class="ts-label">Do powtorki</div></div>
+      </div>
+    `
+        : ""
+    }
+    <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
 }

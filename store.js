@@ -45,4 +45,17 @@ function deletePhrase(userId, id) {
   return true;
 }
 
-module.exports = { listPhrases, addPhrase, deletePhrase };
+/** Merges `patch` into an existing phrase record - used to attach a
+ * generated Trening exercise (async, after the phrase itself is already
+ * saved and returned to the client) and to update training stats after
+ * each attempt, without disturbing any other field. */
+function updatePhrase(userId, id, patch) {
+  const phrases = readAll();
+  const idx = phrases.findIndex((p) => p.userId === userId && p.id === id);
+  if (idx === -1) return null;
+  phrases[idx] = { ...phrases[idx], ...patch };
+  writeAll(phrases);
+  return phrases[idx];
+}
+
+module.exports = { listPhrases, addPhrase, updatePhrase, deletePhrase };
