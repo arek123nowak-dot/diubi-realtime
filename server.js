@@ -256,26 +256,72 @@ app.get("/api/training", (req, res) => {
  * "punkty za wiedze, nie za klikanie" rule) and today's running tally.
  */
 app.post("/api/training/:id/attempt", (req, res) => {
-  const { userId, correct } = req.body || {};
-  if (!userId || typeof userId !== "string" || typeof correct !== "boolean") {
-    return res.status(400).json({ error: "Brak userId lub correct." });
+  const { userId, correct, answerText } = req.body || {};
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
   }
   const phrase = listPhrases(userId).find((p) => p.id === req.params.id);
   if (!phrase) return res.status(404).json({ error: "Nie znaleziono." });
 
+  // Two shapes: the existing multiple-choice path already knows the
+  // answer client-side (the options came from us) and just reports it;
+  // the production-check path (free-typed text, see
+  // GET /api/training/:id/production) can't be trusted client-side, so
+  // the server grades it itself against the phrase and the model's own
+  // accepted variants.
+  let isCorrect;
+  if (typeof answerText === "string") {
+    const candidates = [phrase.phrase, ...(phrase.productionCheck?.acceptableAnswers || [])];
+    isCorrect = candidates.some((c) => answerMatches(c, answerText));
+  } else if (typeof correct === "boolean") {
+    isCorrect = correct;
+  } else {
+    return res.status(400).json({ error: "Brak correct lub answerText." });
+  }
+
   const prev = phrase.trainingStats || { attempts: 0, correct: 0, correctStreak: 0, mastered: false };
-  const correctStreak = correct ? (prev.correctStreak || 0) + 1 : 0;
+  const correctStreak = isCorrect ? (prev.correctStreak || 0) + 1 : 0;
   const trainingStats = {
     attempts: prev.attempts + 1,
-    correct: prev.correct + (correct ? 1 : 0),
+    correct: prev.correct + (isCorrect ? 1 : 0),
     correctStreak,
     mastered: prev.mastered || correctStreak >= 2,
-    lastResult: correct ? "correct" : "incorrect",
+    lastResult: isCorrect ? "correct" : "incorrect",
     lastAttemptAt: Date.now(),
   };
   const updated = updatePhrase(userId, req.params.id, { trainingStats });
-  logAttempt(userId, correct);
-  res.json({ trainingStats: updated.trainingStats });
+  logAttempt(userId, isCorrect);
+  res.json({ correct: isCorrect, trainingStats: updated.trainingStats });
+});
+
+/**
+ * The production-check question for a phrase one correct recall away from
+ * mastery (see POST /api/training/:id/attempt) - a brand-new sentence the
+ * user never heard, with the phrase blanked out, typed in freely rather
+ * than picked from options. Generated lazily and cached on the phrase
+ * (not pre-built for every saved phrase up front) since it only matters
+ * for the handful of phrases actually close to mastered at any time.
+ */
+app.get("/api/training/:id/production", async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  const phrase = listPhrases(userId).find((p) => p.id === req.params.id);
+  if (!phrase) return res.status(404).json({ error: "Nie znaleziono." });
+
+  if (phrase.productionCheck?.blankedSentence) {
+    return res.json({ blankedSentence: phrase.productionCheck.blankedSentence });
+  }
+
+  try {
+    const productionCheck = await generateProductionCheck(phrase.phrase, phrase.translation, phrase.targetLang);
+    updatePhrase(userId, req.params.id, { productionCheck });
+    res.json({ blankedSentence: productionCheck.blankedSentence });
+  } catch (err) {
+    console.error(`[TRENING] production check failed for phrase="${phrase.phrase}": ${err.message}`);
+    res.status(502).json({ error: "Nie udalo sie przygotowac pytania." });
+  }
 });
 
 /** Today's score plus a breakdown of the whole Trening set, for the
@@ -441,6 +487,107 @@ async function generateExercise(phrase, contextSentence, translation, targetLang
     correctIndex: parsed.correctIndex,
     explanation: parsed.explanation || "",
   };
+}
+
+/**
+ * The harder follow-up to generateExercise(): a brand-new sentence (never
+ * the one the user actually heard, never reused across calls) using the
+ * phrase, blanked out, with no options - see GET /api/training/:id/production.
+ * Recognizing a phrase among three options is a much lower bar than
+ * recalling and typing it unprompted; this is what actually earns
+ * "mastered" rather than a second lucky multiple-choice guess.
+ */
+async function generateProductionCheck(phrase, translation, targetLang) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: TRANSLATION_MODEL,
+      temperature: 0.6,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `Tworzysz jedno NOWE zdanie w jezyku oryginalnej frazy - inne niz jakikolwiek wczesniejszy przyklad - ` +
+            `ktore naturalnie uzywa podanej frazy (w dowolnej poprawnej gramatycznie odmianie/formie). ` +
+            `Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown) z polami: ` +
+            `"blankedSentence" (to nowe zdanie z fraza zastapiona przez "_____"), ` +
+            `"acceptableAnswers" (tablica 1-3 stringow: dopuszczalne poprawne uzupelnienia luki - np. rozne odmiany/formy frazy pasujace gramatycznie do tego zdania).`,
+        },
+        {
+          role: "user",
+          content: `Fraza: "${phrase}"\nTlumaczenie: "${translation}"`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "{}";
+  const parsed = JSON.parse(content);
+  const acceptableAnswers = Array.isArray(parsed.acceptableAnswers) ? parsed.acceptableAnswers.slice(0, 3) : [];
+  if (!parsed.blankedSentence || acceptableAnswers.length === 0) {
+    throw new Error("malformed production-check response from model");
+  }
+  return { blankedSentence: parsed.blankedSentence, acceptableAnswers };
+}
+
+function normalizeAnswer(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[.,!?;:"'`]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+/** Small, dependency-free edit distance between two words - see
+ * wordsClose() below for how the tolerance threshold is actually applied. */
+function levenshtein(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/** Word-by-word, not whole-string - a multi-word phrase shouldn't get MORE
+ * typo tolerance just because it's longer. "make"->"take" is edit-distance
+ * 1, same as any single-letter typo, but it's a different verb, not a
+ * typo - a standalone sanity check caught this exact false positive before
+ * it shipped (see test_answer_match2.js). Short words (<5 chars) require
+ * an exact match for that reason; longer words get a small typo allowance
+ * that also covers common adjacent-letter transpositions. */
+function wordsClose(word, other) {
+  if (word === other) return true;
+  if (word.length < 5 || other.length < 5) return false;
+  const threshold = word.length >= 8 ? 2 : 1;
+  return levenshtein(word, other) <= threshold;
+}
+
+function answerMatches(candidate, typed) {
+  const a = normalizeAnswer(candidate);
+  const b = normalizeAnswer(typed);
+  if (!b) return false;
+  if (a === b) return true;
+  const aWords = a.split(" ");
+  const bWords = b.split(" ");
+  if (aWords.length !== bWords.length) return false;
+  return aWords.every((word, i) => wordsClose(word, bWords[i]));
 }
 
 /** Translates one batch (<=25 sentences) in a single non-streaming call,

@@ -441,6 +441,21 @@
   .training-option[disabled] { cursor: default; }
   .training-option.correct { border-color: #3fbf6f; background: rgba(63, 191, 111, 0.15); }
   .training-option.incorrect { border-color: #e05a5a; background: rgba(224, 90, 90, 0.15); }
+  .training-type-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 14px;
+    background: #1c2433;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.95rem;
+    color: inherit;
+    font-family: inherit;
+  }
+  .training-type-input:focus { outline: none; border-color: var(--accent); }
+  .training-type-input[disabled] { opacity: 0.6; }
   .training-explanation {
     margin-top: 14px;
     padding: 10px 12px;

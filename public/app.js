@@ -1785,8 +1785,22 @@ async function openTrening() {
   renderTrainingQuestion(card);
 }
 
+// A phrase one correct recall away from mastery (see POST
+// /api/training/:id/attempt - mastery needs two in a row) gets a
+// production check instead of another multiple-choice question: a
+// brand-new sentence, typed freely, no options. Recognizing a phrase
+// among three options is a much lower bar than recalling and typing it
+// unprompted - this is what actually earns "mastered".
 function renderTrainingQuestion(card) {
   const p = trainingQueue[trainingIndex];
+  if (p.trainingStats?.correctStreak === 1) {
+    renderProductionQuestion(card, p);
+  } else {
+    renderChoiceQuestion(card, p);
+  }
+}
+
+function renderChoiceQuestion(card, p) {
   const ex = p.exercise;
   card.innerHTML = `
     <h2>🎯 Trening <span class="review-progress">${trainingIndex + 1} / ${trainingQueue.length}</span></h2>
@@ -1803,6 +1817,79 @@ function renderTrainingQuestion(card) {
   card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
   card.querySelectorAll(".training-option").forEach((btn) => {
     btn.addEventListener("click", () => handleTrainingAnswer(card, Number(btn.dataset.index)));
+  });
+}
+
+async function renderProductionQuestion(card, p) {
+  card.innerHTML = `<h2>🎯 Trening <span class="review-progress">${trainingIndex + 1} / ${trainingQueue.length}</span></h2><p class="loading">Przygotowuje pytanie...</p>`;
+
+  let data;
+  try {
+    const res = await fetch(`/api/training/${p.id}/production?userId=${encodeURIComponent(getUserId())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch {
+    // Never block the session on this - fall back to a regular question.
+    renderChoiceQuestion(card, p);
+    return;
+  }
+
+  card.innerHTML = `
+    <h2>🎯 Trening <span class="review-progress">${trainingIndex + 1} / ${trainingQueue.length}</span></h2>
+    <p class="review-prompt">Ostatni krok - wpisz brakujaca fraze, bez podpowiedzi:</p>
+    <p class="training-blank-sentence">${escapeHtml(data.blankedSentence)}</p>
+    <input class="training-type-input" type="text" placeholder="Wpisz fraze..." autocomplete="off" />
+    <div class="modal-actions">
+      <button class="btn-remember btn-training-submit">Sprawdz</button>
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  const input = card.querySelector(".training-type-input");
+  input.focus();
+  const submit = () => handleProductionAnswer(card, p, input.value);
+  card.querySelector(".btn-training-submit").addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+}
+
+async function handleProductionAnswer(card, p, answerText) {
+  const input = card.querySelector(".training-type-input");
+  input.disabled = true;
+  card.querySelector(".btn-training-submit").disabled = true;
+
+  let result;
+  try {
+    const res = await fetch(`/api/training/${p.id}/attempt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: getUserId(), answerText }),
+    });
+    result = await res.json();
+  } catch {
+    result = { correct: false };
+  }
+  if (result.correct) trainingSessionCorrect++;
+
+  const feedback = result.correct
+    ? `✓ Poprawnie! Poprawna fraza: <strong>${escapeHtml(p.phrase)}</strong>`
+    : `Prawie. Poprawna fraza: <strong>${escapeHtml(p.phrase)}</strong>`;
+  input.insertAdjacentHTML("afterend", `<p class="training-explanation">${feedback}</p>`);
+
+  const hasNext = trainingIndex + 1 < trainingQueue.length;
+  card.querySelector(".modal-actions").innerHTML = `
+    <button class="btn-remember btn-training-next">${hasNext ? "Dalej →" : "Zakoncz trening"}</button>
+    <button class="btn-close">Zamknij</button>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelector(".btn-training-next").addEventListener("click", () => {
+    if (hasNext) {
+      trainingIndex++;
+      renderTrainingQuestion(card);
+    } else {
+      renderTrainingSummary(card);
+    }
   });
 }
 
