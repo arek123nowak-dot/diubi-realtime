@@ -2,6 +2,8 @@ const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
 const reelEl = document.getElementById("reel");
+const reelWrapEl = reelEl.closest(".reel-wrap");
+const expandTranscriptBtn = document.getElementById("expandTranscriptBtn");
 const targetLangInput = document.getElementById("targetLang");
 const sourceBtns = document.querySelectorAll(".source-btn:not(:disabled)");
 const sourceInputRow = document.getElementById("sourceInputRow");
@@ -28,7 +30,11 @@ const homeStats = document.getElementById("homeStats");
 const progressContent = document.getElementById("progressContent");
 
 const TARGET_SAMPLE_RATE = 24000; // GA Realtime API requires >= 24000 Hz
-const MAX_ROWS_KEPT = 50; // prune old rows so a long session doesn't grow the DOM forever
+// A full listening session (even a multi-hour video) should stay fully
+// scrollable in Transkrypcja - raised well past any realistic session length.
+// Still capped, not removed outright, so a session left running unattended
+// for days can't grow the DOM without bound.
+const MAX_ROWS_KEPT = 3000;
 
 let ws = null;
 let audioContext = null;
@@ -735,6 +741,45 @@ function pruneOldRows() {
 function scrollToBottom() {
   reelEl.scrollTop = reelEl.scrollHeight;
 }
+
+// Full-screen "Transkrypcja" view, for tracing back through everything
+// heard so far on a bigger screen instead of just the small window under
+// the player. Deliberately moves the *same* .reel-wrap node into the
+// overlay rather than building a second transcript display: it already
+// holds the complete history (see MAX_ROWS_KEPT above) with live rows and
+// working word-click-to-explain, so there's nothing else to wire up and no
+// second copy of the transcript that could drift out of sync.
+let transcriptHome = null; // {parent, nextSibling} to put reelWrapEl back on close
+
+function openFullTranscript() {
+  if (document.querySelector(".transcript-overlay")) return;
+  transcriptHome = { parent: reelWrapEl.parentElement, nextSibling: reelWrapEl.nextSibling };
+
+  const overlay = document.createElement("div");
+  overlay.className = "transcript-overlay";
+  overlay.innerHTML = `
+    <div class="transcript-overlay-header">
+      <h2>🎞 Transkrypcja</h2>
+      <button class="btn-close transcript-close-btn">Zamknij</button>
+    </div>
+  `;
+  overlay.appendChild(reelWrapEl);
+  reelWrapEl.classList.add("fullscreen");
+  document.body.appendChild(overlay);
+  overlay.querySelector(".transcript-close-btn").addEventListener("click", closeFullTranscript);
+  scrollToBottom();
+}
+
+function closeFullTranscript() {
+  const overlay = document.querySelector(".transcript-overlay");
+  if (!overlay || !transcriptHome) return;
+  reelWrapEl.classList.remove("fullscreen");
+  transcriptHome.parent.insertBefore(reelWrapEl, transcriptHome.nextSibling);
+  overlay.remove();
+  transcriptHome = null;
+}
+
+expandTranscriptBtn.addEventListener("click", openFullTranscript);
 
 function startCapture() {
   audioContext = new (window.AudioContext || window.webkitAudioContext)();

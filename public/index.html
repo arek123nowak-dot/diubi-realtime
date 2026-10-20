@@ -242,7 +242,8 @@
   }
   .reel-header {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr auto;
+    align-items: center;
     border-bottom: 1px solid var(--border);
   }
   .reel-header span {
@@ -253,6 +254,17 @@
     color: var(--muted);
   }
   .reel-header span:first-child { border-right: 1px solid var(--border); }
+  .reel-expand-btn {
+    margin-right: 12px;
+    background: #2a2f3a;
+    color: var(--muted);
+    border: none;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .reel-expand-btn:hover { color: var(--text); }
   /* One shared scrollbar for both columns, so they always move together
      and a translation never drifts out of line with its original. */
   .reel {
@@ -324,6 +336,42 @@
     z-index: 500;
     white-space: nowrap;
   }
+
+  /* Full-screen Transkrypcja view: the existing .reel-wrap (header + rows)
+     is physically moved in here (not cloned) when opened, so it's always
+     showing the exact same live rows/listeners as the small window under
+     the player - no second copy of the transcript to keep in sync. */
+  .transcript-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  .transcript-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  .transcript-overlay-header h2 { margin: 0; font-size: 1.15rem; }
+  .reel-wrap.fullscreen {
+    max-width: none;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .reel-wrap.fullscreen .reel {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  .reel-wrap.fullscreen .cell { font-size: 1.1rem; padding: 16px 24px; }
 
   .modal-overlay {
     position: fixed;
@@ -809,6 +857,7 @@
       <div class="reel-header">
         <span>Oryginal</span>
         <span>Tlumaczenie</span>
+        <button class="reel-expand-btn" id="expandTranscriptBtn" title="Pokaz cala transkrypcje na pelnym ekranie">⤢ Pelny ekran</button>
       </div>
       <div class="reel" id="reel"></div>
     </div>
