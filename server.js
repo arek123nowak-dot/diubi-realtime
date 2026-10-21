@@ -79,7 +79,11 @@ const PRICING_USD_PER_1M = {
 const app = express();
 app.use(express.static("public"));
 app.use("/clips", express.static(CLIPS_DIR));
-app.use(express.json());
+// Default 100kb is too small for a base64-encoded pronunciation-practice
+// recording (POST /api/pronunciation/:id/attempt) - a few seconds of
+// webm/opus audio comfortably fits under this, everything else on this
+// server sends much smaller JSON bodies anyway.
+app.use(express.json({ limit: "5mb" }));
 
 // The Chrome extension's content script calls these endpoints from whatever
 // page it's injected into (YouTube, Spotify, ...) — a different origin than
@@ -324,6 +328,50 @@ app.get("/api/training/:id/production", async (req, res) => {
   }
 });
 
+/**
+ * Pronunciation practice: user reads a saved phrase's own context sentence
+ * aloud (falling back to the AI example sentence, then the bare phrase,
+ * if there's no real context one - same fallback the client uses to show
+ * what to read, kept in sync here since this is what actually gets
+ * graded). Whisper transcribes the recording, scorePronunciation() compares
+ * it word-by-word against the target text for a % score plus a per-word
+ * correct/incorrect breakdown for highlighting.
+ */
+app.post("/api/pronunciation/:id/attempt", async (req, res) => {
+  const { userId, audioBase64, mimeType } = req.body || {};
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  if (!audioBase64 || typeof audioBase64 !== "string") {
+    return res.status(400).json({ error: "Brak nagrania." });
+  }
+  const phrase = listPhrases(userId).find((p) => p.id === req.params.id);
+  if (!phrase) return res.status(404).json({ error: "Nie znaleziono." });
+
+  const targetText = phrase.contextSentence || phrase.example || phrase.phrase;
+
+  let transcribedText;
+  try {
+    transcribedText = await transcribePronunciationAudio(audioBase64, mimeType, phrase.sourceLang);
+  } catch (err) {
+    console.error(`[PRONUNCIATION] transcription failed for phrase="${phrase.phrase}": ${err.message}`);
+    return res.status(502).json({ error: "Nie udalo sie przetworzyc nagrania. Sprobuj ponownie." });
+  }
+
+  const { score, words } = scorePronunciation(targetText, transcribedText);
+
+  const prev = phrase.pronunciationStats || { attempts: 0, bestScore: 0, lastScore: 0, lastAttemptAt: null };
+  const pronunciationStats = {
+    attempts: prev.attempts + 1,
+    bestScore: Math.max(prev.bestScore, score),
+    lastScore: score,
+    lastAttemptAt: Date.now(),
+  };
+  updatePhrase(userId, req.params.id, { pronunciationStats });
+
+  res.json({ score, words, transcribedText, targetText, bestScore: pronunciationStats.bestScore });
+});
+
 /** Today's score plus a breakdown of the whole Trening set, for the
  * summary screen at the end of a session. */
 app.get("/api/training/progress", (req, res) => {
@@ -331,13 +379,25 @@ app.get("/api/training/progress", (req, res) => {
   if (!userId || typeof userId !== "string") {
     return res.status(400).json({ error: "Brak userId." });
   }
-  const ready = listPhrases(userId).filter((p) => p.exerciseStatus === "ready" && p.exercise);
+  const all = listPhrases(userId);
+  const ready = all.filter((p) => p.exerciseStatus === "ready" && p.exercise);
+  // Pronunciation practice isn't gated on exerciseStatus like Trening is -
+  // it works on any saved phrase - so this is measured over the full set,
+  // not just the Trening-ready subset above.
+  const pronunciationAttempted = all.filter((p) => p.pronunciationStats?.attempts > 0);
+  const pronunciationAvgBest = pronunciationAttempted.length
+    ? Math.round(
+        pronunciationAttempted.reduce((sum, p) => sum + p.pronunciationStats.bestScore, 0) / pronunciationAttempted.length
+      )
+    : null;
   res.json({
     today: getTodayStats(userId),
     mastered: ready.filter((p) => p.trainingStats?.mastered).length,
     needsReview: ready.filter((p) => p.trainingStats?.attempts > 0 && !p.trainingStats?.mastered).length,
     fresh: ready.filter((p) => !p.trainingStats || p.trainingStats.attempts === 0).length,
     total: ready.length,
+    pronunciationAvgBest,
+    pronunciationPracticed: pronunciationAttempted.length,
   });
 });
 
@@ -588,6 +648,94 @@ function answerMatches(candidate, typed) {
   const bWords = b.split(" ");
   if (aWords.length !== bWords.length) return false;
   return aWords.every((word, i) => wordsClose(word, bWords[i]));
+}
+
+function tokenizeWords(text) {
+  return text.trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Edit-distance alignment between the TARGET sentence's words and what
+ * Whisper actually heard the user say (see POST /api/pronunciation/:id/attempt)
+ * - the same idea as levenshtein() above, but over whole words instead of
+ * characters, using wordsClose() as the substitution cost. Backtracked to
+ * tag each target word as heard correctly or not; extra words the speaker
+ * added (fillers, false starts) are absorbed as insertions and never count
+ * against the score either way. Verified against exact/typo/missing/extra-
+ * word/silent cases in a standalone test before being written in here (see
+ * test_pronunciation_align.js).
+ */
+function alignTargetWords(targetWords, spokenWords) {
+  const n = targetWords.length;
+  const m = spokenWords.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 0; i <= n; i++) dp[i][0] = i;
+  for (let j = 0; j <= m; j++) dp[0][j] = j;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const subCost = wordsClose(targetWords[i - 1], spokenWords[j - 1]) ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j - 1] + subCost, dp[i - 1][j] + 1, dp[i][j - 1] + 1);
+    }
+  }
+  const matched = new Array(n).fill(false);
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    const subCost = wordsClose(targetWords[i - 1], spokenWords[j - 1]) ? 0 : 1;
+    if (dp[i][j] === dp[i - 1][j - 1] + subCost) {
+      matched[i - 1] = subCost === 0;
+      i--;
+      j--;
+    } else if (dp[i][j] === dp[i - 1][j] + 1) {
+      i--; // target word has no good match in what was heard
+    } else {
+      j--; // extra spoken word, not part of the target sentence
+    }
+  }
+  return matched;
+}
+
+/**
+ * This measures "did the model understand what you said", not true
+ * phonetic pronunciation - no dedicated pronunciation-scoring API is wired
+ * up, Whisper's transcription accuracy is the only signal available. A
+ * reasonable proxy (a mangled word usually IS mangled in the transcript
+ * too) but described to the user as such, never oversold as a clinical
+ * pronunciation score.
+ */
+function scorePronunciation(targetText, spokenText) {
+  const targetDisplay = tokenizeWords(targetText);
+  const spokenDisplay = tokenizeWords(spokenText);
+  const targetNorm = targetDisplay.map(normalizeAnswer);
+  const spokenNorm = spokenDisplay.map(normalizeAnswer);
+  const matched = alignTargetWords(targetNorm, spokenNorm);
+  const correctCount = matched.filter(Boolean).length;
+  const score = targetDisplay.length ? Math.round((correctCount / targetDisplay.length) * 100) : 0;
+  const words = targetDisplay.map((text, idx) => ({ text, correct: matched[idx] }));
+  return { score, words };
+}
+
+/** Sends the user's recorded attempt (whatever format MediaRecorder on the
+ * client produced - webm/opus in every browser that matters here) straight
+ * to OpenAI's standard transcription endpoint, same pattern as
+ * TranscriptionSession.abTestBatchTranscribe() above. */
+async function transcribePronunciationAudio(audioBase64, mimeType, sourceLang) {
+  const buffer = Buffer.from(audioBase64, "base64");
+  const type = mimeType || "audio/webm";
+  const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "mp4" : type.includes("wav") ? "wav" : "webm";
+  const form = new FormData();
+  form.append("file", new Blob([buffer], { type }), `pronunciation.${ext}`);
+  form.append("model", TRANSCRIBE_MODEL);
+  if (sourceLang) form.append("language", sourceLang);
+
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: form,
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${JSON.stringify(body)}`);
+  return (body.text || "").trim();
 }
 
 /** Translates one batch (<=25 sentences) in a single non-streaming call,

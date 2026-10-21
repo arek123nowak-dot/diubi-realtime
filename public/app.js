@@ -1593,6 +1593,11 @@ async function renderProgressTab() {
       <div class="pg-item"><div class="pg-value success">${progress.mastered}</div><div class="pg-label">Opanowane</div></div>
       <div class="pg-item"><div class="pg-value">${progress.needsReview}</div><div class="pg-label">Do powtorki</div></div>
       <div class="pg-item"><div class="pg-value">${progress.fresh}</div><div class="pg-label">Nowe</div></div>
+      ${
+        progress.pronunciationPracticed > 0
+          ? `<div class="pg-item"><div class="pg-value success">${progress.pronunciationAvgBest}%</div><div class="pg-label">Wymowa (${progress.pronunciationPracticed})</div></div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -1741,6 +1746,7 @@ function renderReviewAnswer(card) {
     ${clipPlayerHtml(p)}
     ${explainFieldsHtml(p)}
     <div class="modal-actions">
+      <button class="btn-secondary btn-review-pronounce">🎤 Cwicz wymowe</button>
       <button class="btn-remember btn-review-next">${hasNext ? "Nastepna →" : "Zakoncz powtorke"}</button>
       <button class="btn-close">Zamknij</button>
     </div>
@@ -1754,8 +1760,180 @@ function renderReviewAnswer(card) {
       card.closest(".modal-overlay").remove();
     }
   });
+  card.querySelector(".btn-review-pronounce").addEventListener("click", () => openPronunciationPractice(p));
   wireReviewNav(card);
   wireClipAudioElements(card);
+}
+
+// ---------------------------------------------------------------------------
+// Cwicz wymowe: read a saved phrase's own sentence aloud, Whisper
+// transcribes it, the server compares word-by-word against the target text
+// (see server.js scorePronunciation()) for a % score and a per-word
+// correct/incorrect breakdown. This measures whether the model understood
+// what was said, not true phonetic pronunciation - a reasonable proxy, but
+// never presented as more than that.
+// ---------------------------------------------------------------------------
+
+let pronunciationRecorder = null;
+let pronunciationChunks = [];
+let pronunciationStream = null;
+
+function micAvailable() {
+  return Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function");
+}
+
+async function startPronunciationRecording(onStop) {
+  pronunciationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  pronunciationChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+  pronunciationRecorder = mimeType ? new MediaRecorder(pronunciationStream, { mimeType }) : new MediaRecorder(pronunciationStream);
+  pronunciationRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) pronunciationChunks.push(e.data);
+  };
+  pronunciationRecorder.onstop = () => {
+    pronunciationStream.getTracks().forEach((t) => t.stop());
+    pronunciationStream = null;
+    const blob = new Blob(pronunciationChunks, { type: pronunciationRecorder.mimeType || "audio/webm" });
+    onStop(blob);
+  };
+  pronunciationRecorder.start();
+}
+
+function stopPronunciationRecording() {
+  if (pronunciationRecorder && pronunciationRecorder.state !== "inactive") pronunciationRecorder.stop();
+}
+
+// Closing the modal mid-recording (Zamknij, or clicking outside the card)
+// doesn't go through stopPronunciationRecording() above - without this,
+// the mic stream would keep capturing silently in the background forever,
+// since the track-stop cleanup normally only runs inside onstop. Detaches
+// onstop first so an abandoned recording's blob is never processed against
+// a modal that's already gone.
+function releasePronunciationMic() {
+  if (pronunciationRecorder && pronunciationRecorder.state !== "inactive") {
+    pronunciationRecorder.onstop = null;
+    pronunciationRecorder.stop();
+  }
+  if (pronunciationStream) {
+    pronunciationStream.getTracks().forEach((t) => t.stop());
+    pronunciationStream = null;
+  }
+}
+
+async function blobToBase64(blob) {
+  const buffer = await blob.arrayBuffer();
+  return arrayBufferToBase64(buffer);
+}
+
+function openPronunciationPractice(p) {
+  releasePronunciationMic(); // safety net against a stale stream from a previous unclosed session
+  const overlay = openModal("");
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) releasePronunciationMic();
+  });
+  const card = overlay.querySelector(".modal-card");
+  renderPronunciationPractice(card, p);
+}
+
+function pronunciationTargetText(p) {
+  return p.contextSentence || p.example || p.phrase;
+}
+
+function renderPronunciationPractice(card, p) {
+  const targetText = pronunciationTargetText(p);
+  card.innerHTML = `
+    <h2>🎤 Cwicz wymowe</h2>
+    <p class="review-prompt">Przeczytaj na glos:</p>
+    <p class="pronunciation-target">${escapeHtml(targetText)}</p>
+    <div class="pronunciation-record-wrap">
+      <button class="pronunciation-record-btn" id="pronunciationRecordBtn">🎤</button>
+      <p class="pronunciation-status" id="pronunciationStatus">Kliknij, by zaczac nagrywanie</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => {
+    releasePronunciationMic();
+    card.closest(".modal-overlay").remove();
+  });
+
+  const recordBtn = card.querySelector("#pronunciationRecordBtn");
+  const statusEl = card.querySelector("#pronunciationStatus");
+
+  if (!micAvailable()) {
+    recordBtn.disabled = true;
+    statusEl.textContent = "Nagrywanie glosu wymaga bezpiecznego polaczenia (https) - niedostepne na tym adresie.";
+    return;
+  }
+
+  let recording = false;
+  recordBtn.addEventListener("click", async () => {
+    if (!recording) {
+      try {
+        await startPronunciationRecording((blob) => handlePronunciationRecording(card, p, blob));
+      } catch {
+        statusEl.textContent = "Nie udalo sie uzyskac dostepu do mikrofonu.";
+        return;
+      }
+      recording = true;
+      recordBtn.classList.add("recording");
+      statusEl.textContent = "Nagrywam... kliknij, by zakonczyc";
+    } else {
+      recording = false;
+      recordBtn.disabled = true;
+      recordBtn.classList.remove("recording");
+      statusEl.textContent = "Przetwarzam...";
+      stopPronunciationRecording();
+    }
+  });
+}
+
+async function handlePronunciationRecording(card, p, blob) {
+  const audioBase64 = await blobToBase64(blob);
+  let result;
+  try {
+    const res = await fetch(`/api/pronunciation/${p.id}/attempt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: getUserId(), audioBase64, mimeType: blob.type }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    result = await res.json();
+  } catch {
+    const statusEl = card.querySelector("#pronunciationStatus");
+    if (statusEl) statusEl.textContent = "Nie udalo sie przetworzyc nagrania. Sprobuj ponownie.";
+    const recordBtn = card.querySelector("#pronunciationRecordBtn");
+    if (recordBtn) recordBtn.disabled = false;
+    return;
+  }
+  renderPronunciationResult(card, p, result);
+}
+
+function renderPronunciationResult(card, p, result) {
+  const wordsHtml = result.words
+    .map((w) => `<span class="pw ${w.correct ? "pw-correct" : "pw-incorrect"}">${escapeHtml(w.text)}</span>`)
+    .join(" ");
+  const headline =
+    result.score === 100
+      ? "Swietnie! Wykonales zadanie w 100% poprawnie."
+      : result.score >= 80
+        ? "Bardzo dobrze!"
+        : result.score >= 50
+          ? "Niezle, ale jest co poprawic."
+          : "Sprobuj jeszcze raz, wyrazniej.";
+  card.innerHTML = `
+    <h2>🎤 Cwicz wymowe</h2>
+    <p class="pronunciation-score">${result.score}%</p>
+    <p class="pronunciation-headline">${escapeHtml(headline)}</p>
+    <p class="pronunciation-target pronunciation-highlighted">${wordsHtml}</p>
+    <div class="modal-actions">
+      <button class="btn-remember btn-pronunciation-retry">🎤 Sprobuj ponownie</button>
+      <button class="btn-close">Zamknij</button>
+    </div>
+  `;
+  card.querySelector(".btn-close").addEventListener("click", () => card.closest(".modal-overlay").remove());
+  card.querySelector(".btn-pronunciation-retry").addEventListener("click", () => renderPronunciationPractice(card, p));
 }
 
 // ---------------------------------------------------------------------------

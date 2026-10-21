@@ -504,6 +504,44 @@
   }
   .training-type-input:focus { outline: none; border-color: var(--accent); }
   .training-type-input[disabled] { opacity: 0.6; }
+
+  .pronunciation-target {
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.6;
+    margin: 14px 0;
+  }
+  .pronunciation-record-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin: 24px 0;
+  }
+  .pronunciation-record-btn {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: none;
+    background: #e05a5a;
+    color: white;
+    font-size: 1.8rem;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .pronunciation-record-btn.recording { animation: pronunciation-pulse 1.2s infinite; }
+  .pronunciation-record-btn[disabled] { opacity: 0.5; cursor: default; animation: none; }
+  @keyframes pronunciation-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(224, 90, 90, 0.5); }
+    70% { box-shadow: 0 0 0 16px rgba(224, 90, 90, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(224, 90, 90, 0); }
+  }
+  .pronunciation-status { color: var(--muted); font-size: 0.85rem; margin: 0; text-align: center; }
+  .pronunciation-score { font-size: 2.6rem; font-weight: 700; text-align: center; margin: 10px 0 0; }
+  .pronunciation-headline { text-align: center; color: var(--muted); margin: 0 0 10px; }
+  .pronunciation-highlighted .pw { padding: 1px 3px; border-radius: 4px; }
+  .pw-correct { background: rgba(63, 191, 111, 0.22); }
+  .pw-incorrect { background: rgba(224, 90, 90, 0.22); }
   .training-explanation {
     margin-top: 14px;
     padding: 10px 12px;
