@@ -106,10 +106,18 @@ let captionsPollTimer = null;
 // Plain "Start" (no source loaded through the picker above) is the manual
 // two-tab flow: the user already has the audio playing in some other tab,
 // so the normal picker — not a preference for this tab — is what they need.
-startBtn.addEventListener("click", () => start({ preferCurrentTab: false }));
-stopBtn.addEventListener("click", stop);
-loadSourceBtn.addEventListener("click", loadSource);
-sourceUrlInput.addEventListener("keydown", (e) => {
+// Optional chaining on every top-level binding in this file, not just these
+// three: a single missing element (stale cached HTML served alongside fresh
+// JS, a future markup rename...) used to throw here and silently kill every
+// addEventListener call still to come in the file - including unrelated
+// features like the bottom nav - since a top-level exception halts the rest
+// of the script. One broken button should never be able to take down
+// navigation. Confirmed as the real cause of a "nothing happens when I tap
+// any nav button" report.
+startBtn?.addEventListener("click", () => start({ preferCurrentTab: false }));
+stopBtn?.addEventListener("click", stop);
+loadSourceBtn?.addEventListener("click", loadSource);
+sourceUrlInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadSource();
 });
 sourceBtns.forEach((btn) => {
@@ -135,10 +143,10 @@ sourceBtns.forEach((btn) => {
   });
 });
 
-sourceSearchInput.addEventListener("keydown", (e) => {
+sourceSearchInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") runYouTubeSearch();
 });
-sourceSearchBtn.addEventListener("click", runYouTubeSearch);
+sourceSearchBtn?.addEventListener("click", runYouTubeSearch);
 
 async function runYouTubeSearch() {
   const q = sourceSearchInput.value.trim();
@@ -273,7 +281,7 @@ function collapseSourcePicker() {
   document.body.classList.add("compact");
 }
 
-backToStartBtn.addEventListener("click", resetToStart);
+backToStartBtn?.addEventListener("click", resetToStart);
 
 /** Undoes collapseSourcePicker() and everything loadSource()/start() set up
  * — the only way out of a loaded source before this (short of refreshing
@@ -779,7 +787,7 @@ function closeFullTranscript() {
   transcriptHome = null;
 }
 
-expandTranscriptBtn.addEventListener("click", openFullTranscript);
+expandTranscriptBtn?.addEventListener("click", openFullTranscript);
 
 function startCapture() {
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -1287,7 +1295,7 @@ function escapeHtml(str) {
 // Moj pamietnik: everything saved via "Zapamietaj", newest first.
 // ---------------------------------------------------------------------------
 
-notebookBtn.addEventListener("click", openNotebook);
+notebookBtn?.addEventListener("click", openNotebook);
 
 async function openNotebook() {
   const overlay = openModal(`<h2>📖 Moj pamietnik</h2><p class="loading">Wczytuje...</p>`);
@@ -1384,7 +1392,7 @@ function formatRelativeDate(ms) {
 // Just a way back in, not a tracker: no watch progress, no streaks.
 // ---------------------------------------------------------------------------
 
-mojaNaukaBtn.addEventListener("click", openMojaNauka);
+mojaNaukaBtn?.addEventListener("click", openMojaNauka);
 
 async function openMojaNauka() {
   const overlay = openModal(`<h2>📚 Moja nauka</h2><p class="loading">Wczytuje...</p>`);
@@ -1613,7 +1621,7 @@ async function renderProgressTab() {
 let reviewQueue = [];
 let reviewIndex = 0;
 
-powtorkaBtn.addEventListener("click", openReview);
+powtorkaBtn?.addEventListener("click", openReview);
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -1950,7 +1958,7 @@ let trainingQueue = [];
 let trainingIndex = 0;
 let trainingSessionCorrect = 0;
 
-treningBtn.addEventListener("click", () => openTrening());
+treningBtn?.addEventListener("click", () => openTrening());
 
 function showTrainingBanner(count) {
   trainingBanner.innerHTML = `

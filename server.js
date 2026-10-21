@@ -225,7 +225,7 @@ app.post("/api/phrases", (req, res) => {
   // there's no captured sentence to blank out, per the "don't build
   // exercises on data we don't trust" rule from the product brief.
   if (!lowConfidence && contextSentence) {
-    generateExercise(phrase, contextSentence, translation, saved.targetLang)
+    generateExercise(phrase, contextSentence, translation, saved.targetLang, saved.sourceLang)
       .then((exercise) => {
         const updated = updatePhrase(userId, id, {
           exercise,
@@ -319,7 +319,13 @@ app.get("/api/training/:id/production", async (req, res) => {
   }
 
   try {
-    const productionCheck = await generateProductionCheck(phrase.phrase, phrase.translation, phrase.targetLang);
+    const productionCheck = await generateProductionCheck(
+      phrase.phrase,
+      phrase.translation,
+      phrase.targetLang,
+      phrase.sourceLang,
+      phrase.contextSentence
+    );
     updatePhrase(userId, req.params.id, { productionCheck });
     res.json({ blankedSentence: productionCheck.blankedSentence });
   } catch (err) {
@@ -498,7 +504,7 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
  * POST /api/phrases - so it never has to build a question on text we
  * already know might be wrong.
  */
-async function generateExercise(phrase, contextSentence, translation, targetLang) {
+async function generateExercise(phrase, contextSentence, translation, targetLang, sourceLang) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -514,6 +520,15 @@ async function generateExercise(phrase, contextSentence, translation, targetLang
           role: "system",
           content:
             `Tworzysz jedno cwiczenie typu "uzupelnij luke" na podstawie zdania, ktore uczacy sie jezyka naprawde uslyszal. ` +
+            // Without an explicit language name pinned down, the model has
+            // nothing but the (short, sometimes ambiguous) phrase itself to
+            // infer the source language from - and since every instruction
+            // around it is in Polish, it would sometimes default to writing
+            // the blanked sentence/options in Polish instead. Confirmed as a
+            // real failure in testing, not a hypothetical.
+            (sourceLang
+              ? `Fraza i zdanie ponizej sa w jezyku "${sourceLang}" - pola "blankedSentence" i "options" MUSZA byc w tym samym jezyku (${sourceLang}), nigdy w jezyku tlumaczenia. `
+              : "") +
             `Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown, bez komentarzy) z polami: ` +
             `"blankedSentence" (podane zdanie z podana fraza zastapiona przez "_____", reszta zdania bez zmian), ` +
             `"options" (tablica DOKLADNIE 3 stringow w jezyku oryginalnej frazy: jeden to poprawna fraza pasujaca do luki, ` +
@@ -557,7 +572,7 @@ async function generateExercise(phrase, contextSentence, translation, targetLang
  * recalling and typing it unprompted; this is what actually earns
  * "mastered" rather than a second lucky multiple-choice guess.
  */
-async function generateProductionCheck(phrase, translation, targetLang) {
+async function generateProductionCheck(phrase, translation, targetLang, sourceLang, contextSentence) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -574,13 +589,32 @@ async function generateProductionCheck(phrase, translation, targetLang) {
           content:
             `Tworzysz jedno NOWE zdanie w jezyku oryginalnej frazy - inne niz jakikolwiek wczesniejszy przyklad - ` +
             `ktore naturalnie uzywa podanej frazy (w dowolnej poprawnej gramatycznie odmianie/formie). ` +
+            // sourceLang is almost never known here in practice (DIUBI
+            // auto-detects the source language live, it's never configured
+            // up front) - so this alone isn't enough. The real fix is
+            // contextSentence below: a short, isolated phrase gives the
+            // model almost nothing to detect language from, and every
+            // instruction around it is in Polish, so it would sometimes
+            // default to writing the new sentence in Polish - confirmed as
+            // a real failure in testing, not a hypothetical. A full real
+            // sentence is something the model can reliably detect language
+            // from.
+            (sourceLang
+              ? `Fraza jest w jezyku "${sourceLang}" - nowe zdanie i "acceptableAnswers" MUSZA byc w tym samym jezyku (${sourceLang}), nigdy w jezyku tlumaczenia. `
+              : "") +
+            (contextSentence
+              ? `Ponizej (w "Przyklad uzycia") masz prawdziwe zdanie, w ktorym ta fraza faktycznie padla - rozpoznaj po nim jezyk oryginalu. ` +
+                `Nowe zdanie i "acceptableAnswers" MUSZA byc w DOKLADNIE tym samym jezyku co to przykladowe zdanie, nigdy w jezyku tlumaczenia. `
+              : "") +
             `Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown) z polami: ` +
             `"blankedSentence" (to nowe zdanie z fraza zastapiona przez "_____"), ` +
             `"acceptableAnswers" (tablica 1-3 stringow: dopuszczalne poprawne uzupelnienia luki - np. rozne odmiany/formy frazy pasujace gramatycznie do tego zdania).`,
         },
         {
           role: "user",
-          content: `Fraza: "${phrase}"\nTlumaczenie: "${translation}"`,
+          content:
+            `Fraza: "${phrase}"\nTlumaczenie: "${translation}"` +
+            (contextSentence ? `\nPrzyklad uzycia: "${contextSentence}"` : ""),
         },
       ],
     }),
