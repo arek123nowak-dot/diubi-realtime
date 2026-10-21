@@ -12,6 +12,8 @@ import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -33,6 +35,11 @@ class MainActivity : AppCompatActivity() {
     // defined yet at that point, so it's flushed from onPageFinished instead.
     private var pendingSharedText: String? = null
     private var pageLoaded = false
+
+    // Guards against the error dialog stacking twice if onReceivedError
+    // fires more than once for the same failed load (WebView does this
+    // sometimes) - reset once a new attempt is actually submitted.
+    private var errorDialogShowing = false
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -74,6 +81,21 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 pageLoaded = true
                 flushPendingSharedText()
+            }
+
+            // A stale/wrong server IP (the PC's LAN IP changes often -
+            // DHCP lease renewal, reconnecting to Wi-Fi...) used to leave
+            // the WebView stuck on a dead browser error page with no way
+            // back to the "enter server address" dialog, which only ever
+            // showed on first run. Any main-frame load failure reopens it
+            // instead, pre-filled with the old value to edit. Sub-resource
+            // failures (an image, a font) are ignored - only the main page
+            // failing means "wrong server address".
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                if (request.isForMainFrame && !errorDialogShowing) {
+                    showServerUrlDialog(error = true)
+                }
             }
         }
         // Surfaces page-side console.log/console.error (and JS exceptions
@@ -132,19 +154,27 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript("diubiSetSourceUrl('$escaped')", null)
     }
 
-    private fun showServerUrlDialog() {
+    private fun showServerUrlDialog(error: Boolean = false) {
+        errorDialogShowing = true
         val input = EditText(this)
         input.hint = "np. http://192.168.1.23:3000"
+        input.setText(ServerConfig.getUrl(this) ?: "")
         AlertDialog.Builder(this)
-            .setTitle("Adres serwera DIUBI")
+            .setTitle(if (error) "Nie udalo sie polaczyc z serwerem" else "Adres serwera DIUBI")
             .setMessage(
-                "Podaj adres, pod ktorym dziala serwer Node.js - lokalny adres IP " +
-                    "komputera w tej samej sieci Wi-Fi podczas testow, albo adres " +
-                    "wdrozenia (Render) pozniej."
+                if (error)
+                    "Sprawdz, czy serwer dziala i czy telefon jest w tej samej sieci Wi-Fi co " +
+                        "komputer, a nastepnie popraw adres ponizej - zwykle zmienia sie tylko " +
+                        "koncowka adresu IP."
+                else
+                    "Podaj adres, pod ktorym dziala serwer Node.js - lokalny adres IP " +
+                        "komputera w tej samej sieci Wi-Fi podczas testow, albo adres " +
+                        "wdrozenia (Render) pozniej."
             )
             .setView(input)
             .setCancelable(false)
             .setPositiveButton("OK") { _, _ ->
+                errorDialogShowing = false
                 val url = input.text.toString().trim()
                 if (url.isNotEmpty()) {
                     ServerConfig.setUrl(this, url)
