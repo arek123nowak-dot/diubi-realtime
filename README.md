@@ -70,30 +70,58 @@ Postgres (patrz `store.js` — jedna tabela, migracja 1:1).
   pamiętnik, więc ktoś czyszczący dane przeglądarki resetuje sobie licznik.
   Wystarczające na testy ze znajomymi, nie na publiczny launch bez kontroli.
 
-## Wdrożenie publiczne (Render)
+## Wdrożenie publiczne (Hetzner + Docker + Caddy) — zalecane
 
 Dziś backend działa tylko na `localhost` — poniższe kroki wystawiają go pod
 publicznym adresem, żeby ktoś poza Tobą (np. nauczycielka testująca MVP)
 mógł z niego skorzystać bez uruchamiania czegokolwiek na własnym komputerze.
+To ta sama metoda (własny VPS, Docker, Caddy robiący HTTPS automatycznie),
+jaką stoi DiubiFix — w przeciwieństwie do Render (patrz niżej) dysk jest
+tu trwały, więc `data/phrases.json` (Pamiętnik) i `data/usage.json`
+**przetrwają restart i redeploy**.
 
-1. Wypchnij repo na GitHub (już zrobione, jeśli czytasz to stąd).
+1. Nowy serwer w [Hetzner Cloud](https://console.hetzner.cloud) — najlepiej
+   osobny od tego, na którym stoi DiubiFix (niezależność: błąd/restart
+   DIUBI nie dotyka działającej już DiubiFix). Obraz Ubuntu 24.04, typ
+   CX22 (2 vCPU / 4GB, ok. 4-5€/mc) wystarczy, dodaj swój klucz SSH.
+2. Wypchnij repo na GitHub (już zrobione, jeśli czytasz to stąd).
+3. Zaloguj się na serwer (`ssh root@<IP-serwera>`) i odpal instalator:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/<Twoj-github>/diubi-realtime/main/deploy/instaluj.sh -o instaluj.sh
+   bash instaluj.sh https://github.com/<Twoj-github>/diubi-realtime.git
+   ```
+   Skrypt zapyta o domenę (Enter = tymczasowy publiczny adres
+   `<IP>.sslip.io` z HTTPS od razu, bez kupowania domeny — wystarczy do
+   pierwszych testów) i o `OPENAI_API_KEY`, zbuduje obraz i odpali
+   `docker compose up -d --build`.
+4. Jeśli chcesz użyć `diubi.app` (kupionej domeny) od razu: w DNS tej
+   domeny ustaw rekord **A** wskazujący na IP nowego serwera, podaj tę
+   domenę w pytaniu o domenę w kroku 3 (albo wpisz ją ręcznie do `.env` na
+   serwerze i zrestartuj `docker compose up -d --build`).
+5. Aktualizacja po każdej zmianie w kodzie (z Windows, PowerShell, jedna
+   linia):
+   ```
+   ssh root@<IP-serwera> "cd ~/diubi && git pull && docker compose up -d --build"
+   ```
+
+**Firewall:** w panelu Hetznera zostaw otwarte tylko porty 22, 80 i 443.
+
+### Alternatywa: Render (prościej na start, dane nietrwałe)
+
+1. Wypchnij repo na GitHub.
 2. Na [render.com](https://render.com): **New +** → **Web Service** → połącz
    repo `diubi-realtime`.
 3. Ustawienia: Build Command `npm install`, Start Command `npm start`.
 4. W zakładce **Environment** dodaj zmienne z `.env.example` (przede
    wszystkim `OPENAI_API_KEY`) — Render sam ustawia `PORT`, nie trzeba go
    podawać ręcznie.
-5. Deploy. Render da publiczny adres `https://<nazwa>.onrender.com` —
-   właśnie ten link (nie `localhost:3000`) wklejasz do `BACKEND_WS_URL` w
-   `extension/background.js`, jeśli chcesz, żeby rozszerzenie też łączyło
-   się z publicznym backendem zamiast lokalnego.
+5. Deploy. Render da publiczny adres `https://<nazwa>.onrender.com`.
 
 **Ważne zastrzeżenie:** `data/phrases.json` i `data/usage.json` to zwykłe
 pliki na dysku kontenera. Na darmowym tierze Render dysk jest efemeryczny —
 **każdy redeploy czyści pamiętnik i liczniki limitów**. Do krótkiego testu
-ze znajomymi to akceptowalne ryzyko (i tak zaczynamy liczenie od zera), ale
-nie nadaje się pod dłuższe użytkowanie — wtedy naturalny krok to migracja na
-Postgres (Render ma go jako dodatkowy, płatny serwis), o czym niżej.
+ze znajomymi to akceptowalne ryzyko, ale nie nadaje się pod dłuższe
+użytkowanie — stąd Hetzner jako ścieżka zalecana powyżej.
 
 ## Następne kroki (do decyzji)
 
