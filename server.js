@@ -1530,7 +1530,16 @@ class TranscriptionSession {
     // spurious VAD-triggered segment (silence, breath, background hum).
     if (trimmed.length > 1 && !this.isScriptOutlier(trimmed)) {
       const segmentId = ++this.segmentCounter;
-      sendJson(this.clientWs, { type: "transcript_final", text: trimmed, segmentId });
+      sendJson(this.clientWs, {
+        type: "transcript_final",
+        text: trimmed,
+        segmentId,
+        // Elapsed listening time when this sentence completed - shown as a
+        // timestamp per row in the transcript, so a long session reads like
+        // Spotify's own podcast transcript (time markers you can scan to
+        // find roughly where you heard something) instead of one wall of text.
+        elapsedMs: Date.now() - this.startedAt,
+      });
       this.translate(trimmed, segmentId);
       this.captureClip(segmentId, trimmed, startItemId, endItemId);
       // Fire-and-forget, same pattern as abTestBatchTranscribe above - never

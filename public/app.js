@@ -656,11 +656,16 @@ function handleServerMessage(msg) {
     }
     case "transcript_final": {
       const row = claimRow(msg.segmentId);
+      if (typeof msg.elapsedMs === "number") row.tsEl.textContent = formatElapsed(msg.elapsedMs);
       renderClickableWords(row.originalCell, msg.text);
       row.originalCell.classList.remove("active");
       // Lets a click on any word in this row find its way back to the
       // audio clip the server captured for this exact sentence.
       row.originalCell.dataset.segmentId = msg.segmentId;
+      if (transcriptSearchQuery) {
+        filterRow(row);
+        updateTranscriptSearchCount();
+      }
       scrollToBottom();
       break;
     }
@@ -675,6 +680,10 @@ function handleServerMessage(msg) {
       const row = getOrCreateRow(msg.segmentId);
       row.translationCell.textContent = msg.text;
       row.translationCell.classList.remove("active");
+      if (transcriptSearchQuery) {
+        filterRow(row);
+        updateTranscriptSearchCount();
+      }
       pruneOldRows();
       scrollToBottom();
       break;
@@ -715,16 +724,35 @@ function getOrCreateRow(id) {
   if (!row) {
     const el = document.createElement("div");
     el.className = "row";
+    // Elapsed-time label, set once the server assigns elapsedMs at
+    // transcript_final (see formatElapsed below) - empty (and collapsed via
+    // CSS :empty) for the still-streaming "pending" row.
+    const tsEl = document.createElement("div");
+    tsEl.className = "row-ts";
+    const cellsEl = document.createElement("div");
+    cellsEl.className = "row-cells";
     const originalCell = document.createElement("div");
     originalCell.className = "cell original";
     const translationCell = document.createElement("div");
     translationCell.className = "cell translation";
-    el.append(originalCell, translationCell);
+    cellsEl.append(originalCell, translationCell);
+    el.append(tsEl, cellsEl);
     reelEl.appendChild(el);
-    row = { el, originalCell, translationCell };
+    row = { el, tsEl, originalCell, translationCell };
     rows.set(id, row);
   }
   return row;
+}
+
+/** 125000 -> "02:05"; past an hour -> "1:02:05". */
+function formatElapsed(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const mm = String(m).padStart(h > 0 ? 2 : 1, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
 }
 
 /** Moves the in-progress "pending" row (if any) to its real segmentId once the server assigns one. */
@@ -759,6 +787,77 @@ function scrollToBottom() {
 // second copy of the transcript that could drift out of sync.
 let transcriptHome = null; // {parent, nextSibling} to put reelWrapEl back on close
 
+// Free-text filter over the full transcript, live while listening - rows
+// (both columns) that don't match are hidden and matching words in the
+// original get highlighted, so a long session reads like a search result
+// instead of one wall of text. State lives at module level (not scoped to
+// the overlay) because rows themselves carry the display:none/highlight -
+// closing the overlay must reset it, or the small under-player view would
+// stay filtered too.
+let transcriptSearchQuery = "";
+let transcriptSearchMatchIndex = -1;
+
+function filterRow(row) {
+  const q = transcriptSearchQuery;
+  row.originalCell.querySelectorAll(".word.search-hit").forEach((w) => w.classList.remove("search-hit"));
+  if (!q) {
+    row.el.style.display = "";
+    return;
+  }
+  const matches =
+    row.originalCell.textContent.toLocaleLowerCase().includes(q) ||
+    row.translationCell.textContent.toLocaleLowerCase().includes(q);
+  row.el.style.display = matches ? "" : "none";
+  if (matches) {
+    row.originalCell
+      .querySelectorAll(".word")
+      .forEach((w) => w.classList.toggle("search-hit", w.textContent.toLocaleLowerCase().includes(q)));
+  }
+}
+
+function applyTranscriptFilter(query) {
+  transcriptSearchQuery = (query || "").trim().toLocaleLowerCase();
+  transcriptSearchMatchIndex = -1;
+  for (const row of rows.values()) filterRow(row);
+  updateTranscriptSearchCount();
+}
+
+function getVisibleTranscriptRows() {
+  return [...rows.values()].filter((r) => r.el.style.display !== "none");
+}
+
+function updateTranscriptSearchCount() {
+  const countEl = document.querySelector(".transcript-search-count");
+  if (!countEl) return;
+  if (!transcriptSearchQuery) {
+    countEl.textContent = "";
+    return;
+  }
+  const count = getVisibleTranscriptRows().length;
+  countEl.textContent = count > 0 ? `${count} ${polishMatchWord(count)}` : "brak wynikow";
+}
+
+/** Polish plural: 1 dopasowanie, 2-4 dopasowania, 5+ / 12-14 dopasowan. */
+function polishMatchWord(n) {
+  if (n === 1) return "dopasowanie";
+  const lastTwo = n % 100;
+  const last = n % 10;
+  if (last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14)) return "dopasowania";
+  return "dopasowan";
+}
+
+/** Enter/Shift+Enter in the search box - scrolls to the next/previous matching row, cycling. */
+function jumpToTranscriptMatch(reverse) {
+  const matches = getVisibleTranscriptRows();
+  if (matches.length === 0) return;
+  transcriptSearchMatchIndex =
+    (transcriptSearchMatchIndex + (reverse ? -1 : 1) + matches.length) % matches.length;
+  const target = matches[transcriptSearchMatchIndex].el;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("row-jumped");
+  setTimeout(() => target.classList.remove("row-jumped"), 900);
+}
+
 function openFullTranscript() {
   if (document.querySelector(".transcript-overlay")) return;
   transcriptHome = { parent: reelWrapEl.parentElement, nextSibling: reelWrapEl.nextSibling };
@@ -768,6 +867,10 @@ function openFullTranscript() {
   overlay.innerHTML = `
     <div class="transcript-overlay-header">
       <h2>🎞 Transkrypcja</h2>
+      <div class="transcript-search-box">
+        <input type="search" class="transcript-search-input" placeholder="Szukaj w transkrypcji..." />
+        <span class="transcript-search-count"></span>
+      </div>
       <button class="btn-close transcript-close-btn">Zamknij</button>
     </div>
   `;
@@ -775,12 +878,21 @@ function openFullTranscript() {
   reelWrapEl.classList.add("fullscreen");
   document.body.appendChild(overlay);
   overlay.querySelector(".transcript-close-btn").addEventListener("click", closeFullTranscript);
+  const searchInput = overlay.querySelector(".transcript-search-input");
+  searchInput.addEventListener("input", () => applyTranscriptFilter(searchInput.value));
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      jumpToTranscriptMatch(e.shiftKey);
+    }
+  });
   scrollToBottom();
 }
 
 function closeFullTranscript() {
   const overlay = document.querySelector(".transcript-overlay");
   if (!overlay || !transcriptHome) return;
+  applyTranscriptFilter(""); // un-hide/un-highlight rows before they go back under the player
   reelWrapEl.classList.remove("fullscreen");
   transcriptHome.parent.insertBefore(reelWrapEl, transcriptHome.nextSibling);
   overlay.remove();
