@@ -4,6 +4,7 @@ const statusEl = document.getElementById("status");
 const reelEl = document.getElementById("reel");
 const reelWrapEl = reelEl.closest(".reel-wrap");
 const expandTranscriptBtn = document.getElementById("expandTranscriptBtn");
+const shareSourceBtn = document.getElementById("shareSourceBtn");
 const targetLangInput = document.getElementById("targetLang");
 const sourceBtns = document.querySelectorAll(".source-btn:not(:disabled)");
 const sourceInputRow = document.getElementById("sourceInputRow");
@@ -1131,6 +1132,52 @@ function currentSourceMeta() {
     sourceUrl: sourceUrlInput.value.trim(),
   };
 }
+
+// Pierwszy, najprostszy kawalek "mechanizmu polecania tresci" z planu: zero
+// umow/afiliacji, czysta petla wirusowa - uzytkownik wysyla znajomemu link
+// do materialu, ktory akurat przetwarza przez DIUBI, razem z zaproszeniem do
+// samej apki. Imie pytane raz (Prompt, nie osobny ekran ustawien) i trzymane
+// w localStorage, zeby kolejne udostepnienia nic juz nie pytaly.
+function getDisplayName() {
+  let name = localStorage.getItem("diubi_display_name");
+  if (name === null) {
+    name = (prompt("Jak mamy Cie podpisac w wiadomosci do znajomego? (mozna zostawic puste)") || "").trim();
+    localStorage.setItem("diubi_display_name", name);
+  }
+  return name;
+}
+
+async function shareCurrentSource() {
+  const { sourceLabel, sourceUrl } = currentSourceMeta();
+  if (!sourceUrl) {
+    setStatus("Najpierw wczytaj jakis material, zeby go udostepnic.", true);
+    return;
+  }
+  const name = getDisplayName();
+  const intro = name ? `${name} poleca Ci` : "Polecam Ci";
+  const text =
+    `🎧 ${intro} ${sourceLabel ? "ten material z " + sourceLabel : "ten material"} i nauke jezyka na bieząco przez DIUBI (tlumaczenie na zywo + zapamietywanie slowek):\n\n` +
+    `${sourceUrl}\n\n` +
+    `Sprobuj sam/a: ${location.origin}`;
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ text });
+      return;
+    } catch (err) {
+      if (err && err.name === "AbortError") return; // user cancelled the native share sheet
+      // falls through to clipboard fallback below
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Skopiowano! Wklej w wiadomosci do znajomego.");
+  } catch {
+    setStatus("Nie udalo sie skopiowac - skopiuj link recznie: " + sourceUrl, true);
+  }
+}
+
+shareSourceBtn?.addEventListener("click", shareCurrentSource);
 
 /** Splits `text` into individual clickable word spans (whitespace kept as
  * plain text nodes between them), replacing `cell`'s content. Used instead

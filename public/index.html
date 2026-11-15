@@ -279,8 +279,8 @@
     color: var(--muted);
   }
   .reel-header span:first-child { border-right: 1px solid var(--border); }
+  .reel-header-actions { display: flex; align-items: center; gap: 8px; margin-right: 12px; }
   .reel-expand-btn {
-    margin-right: 12px;
     background: #2a2f3a;
     color: var(--muted);
     border: none;
@@ -959,7 +959,10 @@
       <div class="reel-header">
         <span>Oryginal</span>
         <span>Tlumaczenie</span>
-        <button class="reel-expand-btn" id="expandTranscriptBtn" title="Pokaz cala transkrypcje na pelnym ekranie">⤢ Pelny ekran</button>
+        <div class="reel-header-actions">
+          <button class="reel-expand-btn" id="shareSourceBtn" title="Udostepnij ten material znajomemu">📤</button>
+          <button class="reel-expand-btn" id="expandTranscriptBtn" title="Pokaz cala transkrypcje na pelnym ekranie">⤢ Pelny ekran</button>
+        </div>
       </div>
       <div class="reel" id="reel"></div>
     </div>
