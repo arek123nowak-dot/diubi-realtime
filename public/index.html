@@ -290,6 +290,7 @@
     cursor: pointer;
   }
   .reel-expand-btn:hover { color: var(--text); }
+  .share-icon-btn { display: flex; align-items: center; padding: 6px 9px; }
   /* One shared scrollbar for both columns, so they always move together
      and a translation never drifts out of line with its original. */
   .reel {
@@ -960,7 +961,15 @@
         <span>Oryginal</span>
         <span>Tlumaczenie</span>
         <div class="reel-header-actions">
-          <button class="reel-expand-btn" id="shareSourceBtn" title="Udostepnij ten material znajomemu">📤</button>
+          <button class="reel-expand-btn share-icon-btn" id="shareSourceBtn" title="Udostepnij ten material znajomemu">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.6" y1="10.6" x2="15.4" y2="6.4" stroke="currentColor" stroke-width="2"></line>
+              <line x1="8.6" y1="13.4" x2="15.4" y2="17.6" stroke="currentColor" stroke-width="2"></line>
+            </svg>
+          </button>
           <button class="reel-expand-btn" id="expandTranscriptBtn" title="Pokaz cala transkrypcje na pelnym ekranie">⤢ Pelny ekran</button>
         </div>
       </div>
