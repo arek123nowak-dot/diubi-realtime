@@ -534,6 +534,22 @@ async function start(options = {}) {
     return;
   }
 
+  // Mobile browsers (Chrome/Safari on Android/iOS) don't implement
+  // getDisplayMedia at all - it's desktop-only. Without this check, the
+  // raw browser error ("...is not a function") is the only thing a mobile
+  // visitor would see, which doesn't tell them what to actually do: use
+  // the native Android app (android-app/), which captures audio via
+  // MediaProjection instead of this API - see the branch above.
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== "function") {
+    setStatus(
+      "Przegladarka na telefonie nie obsluguje przechwytywania dzwieku karty. " +
+        "Na telefonie uzyj aplikacji DIUBI (Android) - na komputerze (Chrome/Edge) ta strona dziala normalnie.",
+      true
+    );
+    startBtn.disabled = false;
+    return;
+  }
+
   // getDisplayMedia's own permission is still live (Stop no longer releases
   // it, see stop() below) — reuse it instead of re-prompting. Chrome has no
   // "remember this" option for tab/screen capture (unlike mic/camera) by
