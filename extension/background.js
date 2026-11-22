@@ -1,4 +1,5 @@
 const BACKEND_WS_URL = "wss://diubi.app/stream";
+const BACKEND_HTTP_URL = "https://diubi.app";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
 // MV3 service workers get killed after ~30s of inactivity and respawn on
@@ -66,6 +67,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "popup-status") {
     getActiveTabId().then((activeTabId) => sendResponse({ activeTabId }));
+    return true;
+  }
+
+  // content.js can't fetch() the backend directly - that request runs under
+  // the HOST PAGE's CSP (e.g. YouTube's), which blocks it regardless of our
+  // manifest's host_permissions. Only an extension-context fetch (here, or
+  // from a popup/options page) is exempt from the page's CSP and CORS.
+  if (message.type === "api-fetch") {
+    fetch(`${BACKEND_HTTP_URL}${message.path}`, message.init)
+      .then(async (res) => {
+        const text = await res.text();
+        sendResponse({ ok: res.ok, status: res.status, text });
+      })
+      .catch((err) => sendResponse({ ok: false, status: 0, text: "", error: err.message }));
     return true;
   }
 });

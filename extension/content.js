@@ -332,7 +332,24 @@
   // title + URL) instead of the web app's loaded-source metadata, since the
   // extension runs directly on the real page rather than an embedded player.
   // -------------------------------------------------------------------------
-  const BACKEND_HTTP_URL = "https://diubi.app";
+  // Routes through background.js instead of calling fetch() here directly -
+  // a content script's own fetch runs under the HOST PAGE's CSP (YouTube's,
+  // Spotify's...), which blocks a cross-origin request to our backend no
+  // matter what host_permissions this extension declares. Only the
+  // background service worker's fetch is exempt from that.
+  function apiFetch(path, init) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: "api-fetch", path, init }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (!response) {
+          reject(new Error("Brak odpowiedzi od rozszerzenia."));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
 
   function getUserId() {
     return new Promise((resolve) => {
@@ -445,13 +462,21 @@
 
     let data;
     try {
-      const res = await fetch(`${BACKEND_HTTP_URL}/api/explain`, {
+      const res = await apiFetch("/api/explain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phrase, contextSentence, targetLang: currentTargetLang }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `HTTP ${res.status}`);
-      data = await res.json();
+      if (!res.ok) {
+        let parsedError;
+        try {
+          parsedError = JSON.parse(res.text).error;
+        } catch {
+          // body wasn't JSON (e.g. an HTML error page) - fall through to the generic message below
+        }
+        throw new Error(res.error || parsedError || `HTTP ${res.status}`);
+      }
+      data = JSON.parse(res.text);
     } catch (err) {
       overlay.querySelector(".modal-card").innerHTML = `
         <h2>${escapeHtml(phrase)}</h2>
@@ -510,7 +535,7 @@
   async function saveToNotebook(phrase, contextSentence, explainData) {
     const userId = await getUserId();
     const { sourceLabel, sourceUrl } = currentSourceMeta();
-    const res = await fetch(`${BACKEND_HTTP_URL}/api/phrases`, {
+    const res = await apiFetch("/api/phrases", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -526,7 +551,7 @@
         sourceUrl,
       }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(res.error || `HTTP ${res.status}`);
   }
 
   shadow.getElementById("notebookBtn").addEventListener("click", openNotebook);
@@ -538,9 +563,9 @@
     let phrases;
     try {
       const userId = await getUserId();
-      const res = await fetch(`${BACKEND_HTTP_URL}/api/phrases?userId=${encodeURIComponent(userId)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      phrases = await res.json();
+      const res = await apiFetch(`/api/phrases?userId=${encodeURIComponent(userId)}`);
+      if (!res.ok) throw new Error(res.error || `HTTP ${res.status}`);
+      phrases = JSON.parse(res.text);
     } catch (err) {
       card.innerHTML = `<h2>📖 Moj pamietnik</h2><p class="error-text">Nie udalo sie wczytac: ${escapeHtml(err.message)}</p><div class="modal-actions"><button class="btn-close">Zamknij</button></div>`;
       card.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
@@ -587,10 +612,10 @@
         btn.disabled = true;
         try {
           const userId = await getUserId();
-          const res = await fetch(`${BACKEND_HTTP_URL}/api/phrases/${id}?userId=${encodeURIComponent(userId)}`, {
+          const res = await apiFetch(`/api/phrases/${id}?userId=${encodeURIComponent(userId)}`, {
             method: "DELETE",
           });
-          if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok && res.status !== 204) throw new Error(res.error || `HTTP ${res.status}`);
           item.remove();
         } catch {
           btn.disabled = false;
