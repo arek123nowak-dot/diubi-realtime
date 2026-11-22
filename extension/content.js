@@ -208,9 +208,17 @@
   }
 
   let currentTargetLang = "pl";
+  // From the server's "ready" message - lets a saved phrase point back to
+  // the audio clip captured for its segmentId (see saveToNotebook below).
+  // Without this, POST /api/phrases has no session to look the clip up in,
+  // so hasClip is always false and no clip ever shows up on a saved phrase.
+  let currentSessionId = null;
 
   function handleEvent(msg) {
     switch (msg.type) {
+      case "ready":
+        currentSessionId = msg.sessionId || null;
+        break;
       case "status":
       case "error":
         statusEl.textContent = msg.message;
@@ -226,6 +234,9 @@
         const row = claimRow(msg.segmentId);
         renderClickableWords(row.originalCell, msg.text);
         row.originalCell.classList.remove("active");
+        // Lets a click on any word in this row find its way back to the
+        // audio clip the server captured for this exact sentence.
+        row.originalCell.dataset.segmentId = msg.segmentId;
         scrollToBottom();
         break;
       }
@@ -261,6 +272,7 @@
       reelEl.innerHTML = "";
       statusEl.textContent = "";
       wrapEl.classList.add("visible");
+      currentSessionId = null;
       if (message.targetLang) currentTargetLang = message.targetLang;
     } else if (message.type === "hide-overlay") {
       wrapEl.classList.remove("visible");
@@ -432,7 +444,8 @@
     const phrase = wordEl.textContent.replace(/^[.,!?;:"'()]+|[.,!?;:"'()]+$/g, "");
     if (!phrase) return;
     removeWordBadge();
-    openExplainCard(phrase, cell.textContent);
+    const segmentId = cell.dataset.segmentId ? Number(cell.dataset.segmentId) : null;
+    openExplainCard(phrase, cell.textContent, segmentId);
   });
 
   function openModal(innerHtml) {
@@ -457,7 +470,7 @@
     return new Date(ms).toLocaleDateString("pl-PL", { day: "numeric", month: "short" });
   }
 
-  async function openExplainCard(phrase, contextSentence) {
+  async function openExplainCard(phrase, contextSentence, segmentId) {
     const overlay = openModal(`
       <h2>${escapeHtml(phrase)}</h2>
       <p class="phrase-src">${escapeHtml(contextSentence)}</p>
@@ -507,7 +520,7 @@
       rememberBtn.disabled = true;
       rememberBtn.textContent = "Zapisywanie...";
       try {
-        await saveToNotebook(phrase, contextSentence, data);
+        await saveToNotebook(phrase, contextSentence, data, segmentId);
         rememberBtn.textContent = "⭐ Zapisano";
       } catch {
         rememberBtn.disabled = false;
@@ -557,7 +570,7 @@
     overlay.querySelectorAll("audio").forEach(wireClipAudio);
   }
 
-  async function saveToNotebook(phrase, contextSentence, explainData) {
+  async function saveToNotebook(phrase, contextSentence, explainData, segmentId) {
     const userId = await getUserId();
     const { sourceLabel, sourceUrl } = currentSourceMeta();
     const res = await apiFetch("/api/phrases", {
@@ -575,6 +588,11 @@
         pronunciation: explainData.pronunciation,
         sourceLabel,
         sourceUrl,
+        // Lets the server find the clip it already captured for this exact
+        // sentence (see server.js's POST /api/phrases) - without these two,
+        // hasClip is always false and no clip ever shows up on a saved phrase.
+        sessionId: currentSessionId,
+        segmentId,
       }),
     });
     if (!res.ok) throw new Error(res.error || `HTTP ${res.status}`);
