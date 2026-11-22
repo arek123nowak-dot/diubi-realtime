@@ -74,6 +74,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // the HOST PAGE's CSP (e.g. YouTube's), which blocks it regardless of our
   // manifest's host_permissions. Only an extension-context fetch (here, or
   // from a popup/options page) is exempt from the page's CSP and CORS.
+  if (message.type === "clip-playback") {
+    // Relayed straight to the offscreen document - that's where tabCapture's
+    // audio pipeline actually lives, so that's where sending needs to pause
+    // while a saved clip plays back on the same tab. No-op (silently) if no
+    // capture session is running - nothing is listening on the other end.
+    chrome.runtime.sendMessage({ target: "offscreen", type: "clip-playback", delta: message.delta }).catch(() => {});
+    return;
+  }
+
   if (message.type === "api-fetch") {
     fetch(`${BACKEND_HTTP_URL}${message.path}`, message.init)
       .then(async (res) => {

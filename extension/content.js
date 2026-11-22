@@ -121,6 +121,8 @@
       .modal-card .phrase-src { color: #8a92a3; font-size: 0.8rem; margin: 0 0 14px; font-style: italic; }
       .modal-card .field-label { color: #8a92a3; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 3px; }
       .modal-card .field-value { font-size: 0.95rem; line-height: 1.45; }
+      .modal-card .field-value-sub { color: #8a92a3; font-size: 0.85rem; margin-top: 2px; }
+      .clip-player { width: 100%; height: 34px; margin-top: 4px; }
       .modal-card .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
       .modal-card .modal-actions button { flex: 1; padding: 10px 14px; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
       .btn-remember { background: #4f8cff; color: white; }
@@ -332,6 +334,8 @@
   // title + URL) instead of the web app's loaded-source metadata, since the
   // extension runs directly on the real page rather than an embedded player.
   // -------------------------------------------------------------------------
+  const BACKEND_HTTP_URL = "https://diubi.app"; // only used for the <audio src> below - the REST calls go through apiFetch (background.js), which is CSP-exempt
+
   // Routes through background.js instead of calling fetch() here directly -
   // a content script's own fetch runs under the HOST PAGE's CSP (YouTube's,
   // Spotify's...), which blocks a cross-origin request to our backend no
@@ -518,18 +522,39 @@
       <div class="field-value">${escapeHtml(data.translation)}</div>
       ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
       ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
+      ${data.example && data.exampleTranslation ? `<div class="field-value-sub">${escapeHtml(data.exampleTranslation)}</div>` : ""}
       ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
     `;
+  }
+
+  // tabCapture hears everything the tab plays, including our own clip
+  // <audio> - without telling the live capture pipeline to pause sending
+  // while it plays, replaying a saved clip gets picked up as new incoming
+  // speech and re-transcribed/re-translated (same issue as public/app.js's
+  // activeClipPlaybacks, just relayed across contexts here: content.js ->
+  // background.js -> offscreen.js, since capture actually happens there).
+  function wireClipAudio(audioEl) {
+    audioEl.addEventListener("play", () => chrome.runtime.sendMessage({ type: "clip-playback", delta: 1 }));
+    const release = () => chrome.runtime.sendMessage({ type: "clip-playback", delta: -1 });
+    audioEl.addEventListener("pause", release);
+    audioEl.addEventListener("ended", release);
+  }
+
+  function clipPlayerHtml(p) {
+    if (!p.hasClip) return "";
+    return `<div class="field-label">Oryginalny fragment</div><audio class="clip-player" controls preload="none" src="${BACKEND_HTTP_URL}/clips/${p.id}.wav"></audio>`;
   }
 
   function showSavedPhraseCard(p) {
     const overlay = openModal(`
       <h2>${escapeHtml(p.phrase)}</h2>
       <p class="phrase-src">${escapeHtml(p.contextSentence)}</p>
+      ${clipPlayerHtml(p)}
       ${explainFieldsHtml(p)}
       <div class="modal-actions"><button class="btn-close">Zamknij</button></div>
     `);
     overlay.querySelector(".btn-close").addEventListener("click", () => overlay.remove());
+    overlay.querySelectorAll("audio").forEach(wireClipAudio);
   }
 
   async function saveToNotebook(phrase, contextSentence, explainData) {
@@ -546,6 +571,7 @@
         contextSentence,
         meaning: explainData.meaning,
         example: explainData.example,
+        exampleTranslation: explainData.exampleTranslation,
         pronunciation: explainData.pronunciation,
         sourceLabel,
         sourceUrl,
@@ -594,7 +620,7 @@
           <div class="np-phrase">${escapeHtml(p.phrase)}</div>
           <div class="np-translation">${escapeHtml(p.translation)}</div>
           ${p.contextSentence ? `<div class="np-context">"${escapeHtml(p.contextSentence)}"</div>` : ""}
-          <div class="np-meta">${[p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
+          <div class="np-meta">${[p.hasClip ? "🎧" : null, p.sourceLabel, formatDate(p.capturedAt)].filter(Boolean).join(" · ")}</div>
         </div>`
       )
       .join("");

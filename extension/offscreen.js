@@ -6,6 +6,12 @@ let processorNode = null;
 let sourceNode = null;
 let captureStream = null;
 
+// Counter, not a boolean (mirrors public/app.js's activeClipPlaybacks) - a
+// saved clip replayed from the notebook plays on the SAME tab this document
+// is tabCapture-ing, so without this it gets picked up as new incoming
+// speech and re-transcribed/re-translated right back into the live session.
+let activeClipPlaybacks = 0;
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target !== "offscreen") return;
 
@@ -13,6 +19,8 @@ chrome.runtime.onMessage.addListener((message) => {
     startCapture(message.streamId, message.targetLang, message.wsUrl, message.userId);
   } else if (message.type === "stop-capture") {
     stopCapture();
+  } else if (message.type === "clip-playback") {
+    activeClipPlaybacks = Math.max(0, activeClipPlaybacks + message.delta);
   }
 });
 
@@ -49,7 +57,7 @@ async function startCapture(streamId, targetLang, wsUrl, userId) {
   ws.onclose = () => relay({ type: "status", message: "Polaczenie zamkniete." });
 
   processorNode.onaudioprocess = (event) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || activeClipPlaybacks > 0) return;
 
     const input = event.inputBuffer;
     const channelCount = input.numberOfChannels;
@@ -77,6 +85,7 @@ async function startCapture(streamId, targetLang, wsUrl, userId) {
 }
 
 function stopCapture() {
+  activeClipPlaybacks = 0; // clean slate - don't let a dropped pause/ended message mute the next session forever
   if (ws) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
     ws.close();
