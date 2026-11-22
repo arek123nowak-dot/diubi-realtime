@@ -70,10 +70,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // content.js can't fetch() the backend directly - that request runs under
-  // the HOST PAGE's CSP (e.g. YouTube's), which blocks it regardless of our
-  // manifest's host_permissions. Only an extension-context fetch (here, or
-  // from a popup/options page) is exempt from the page's CSP and CORS.
   if (message.type === "clip-playback") {
     // Relayed straight to the offscreen document - that's where tabCapture's
     // audio pipeline actually lives, so that's where sending needs to pause
@@ -83,6 +79,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  // content.js can't fetch() the backend directly - that request runs under
+  // the HOST PAGE's CSP (e.g. YouTube's), which blocks it regardless of our
+  // manifest's host_permissions. Only an extension-context fetch (here, or
+  // from a popup/options page) is exempt from the page's CSP and CORS.
   if (message.type === "api-fetch") {
     fetch(`${BACKEND_HTTP_URL}${message.path}`, message.init)
       .then(async (res) => {
