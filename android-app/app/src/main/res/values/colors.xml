@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches --bg in public/index.html, so the adaptive icon's background
+         layer reads as the same dark navy as the app itself, not an
+         arbitrary color. -->
+    <color name="ic_launcher_background">#0F1115</color>
+</resources>
