@@ -1,4 +1,4 @@
-const BACKEND_WS_URL = "ws://localhost:3000/stream";
+const BACKEND_WS_URL = "wss://diubi.app/stream";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
 // MV3 service workers get killed after ~30s of inactivity and respawn on

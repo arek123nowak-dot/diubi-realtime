@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Napisy na zywo z tlumaczeniem dla dowolnego audio odtwarzanego w karcie przegladarki.",
   "permissions": ["tabCapture", "offscreen", "activeTab", "scripting", "storage"],
-  "host_permissions": ["http://localhost:3000/*"],
+  "host_permissions": ["https://diubi.app/*"],
   "background": {
     "service_worker": "background.js"
   },

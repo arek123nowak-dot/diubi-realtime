@@ -6,16 +6,8 @@ jezyk, i napisy na zywo pojawiaja sie w pluwajacym okienku nad strona, ktora
 akurat ogladasz (YouTube, Spotify Web Player, dowolny serwis z audio).
 
 Korzysta z tego samego backendu co wersja webowa (`server.js` w katalogu
-glownym) — musi on dzialac lokalnie, dokladnie jak do tej pory.
-
-## Wymagania
-
-Backend musi juz dzialac (ten sam co zawsze):
-
-```
-cd ..
-npm start
-```
+glownym) — domyslnie laczy sie z publicznym wdrozeniem na `diubi.app`,
+zadnego lokalnego serwera nie trzeba uruchamiac.
 
 ## Instalacja rozszerzenia (tryb deweloperski)
 
@@ -47,13 +39,6 @@ npm start
 
 ## Znane ograniczenia tego prototypu
 
-- Backend jest skonfigurowany na localhost (dwie stale do zmiany po
-  publicznym wdrozeniu — patrz glowny README, sekcja "Wdrozenie publiczne"):
-  `BACKEND_WS_URL` w `background.js` (`ws://localhost:3000/stream`) i
-  `BACKEND_HTTP_URL` w `content.js` (`http://localhost:3000`). Dla backendu
-  wdrozonego na Render/Railway (HTTPS) to musi byc `wss://` i `https://`,
-  nie `ws://`/`http://` — przegladarka blokuje polaczenie z bezpiecznej
-  strony (youtube.com) do niezaszyfrowanego adresu.
 - Jedna aktywna sesja naslchu naraz (nowy Start na innej karcie zatrzymuje
   poprzedni).
 - Overlay nie zapamietuje pozycji po przeciagnieciu miedzy sesjami.

@@ -282,7 +282,7 @@
   // title + URL) instead of the web app's loaded-source metadata, since the
   // extension runs directly on the real page rather than an embedded player.
   // -------------------------------------------------------------------------
-  const BACKEND_HTTP_URL = "http://localhost:3000"; // see README known limitations re: BACKEND_WS_URL
+  const BACKEND_HTTP_URL = "https://diubi.app";
 
   function getUserId() {
     return new Promise((resolve) => {
