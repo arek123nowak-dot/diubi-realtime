@@ -26,8 +26,24 @@
         z-index: 2147483647;
         overflow: hidden;
         display: none;
+        flex-direction: column;
+        height: 320px;
+        min-width: 300px;
+        min-height: 180px;
       }
-      .wrap.visible { display: block; }
+      .wrap.visible { display: flex; }
+      .resizeHandle {
+        position: absolute;
+        right: 2px;
+        bottom: 2px;
+        width: 16px;
+        height: 16px;
+        cursor: nwse-resize;
+        background: linear-gradient(135deg, transparent 50%, #4d6bff 50%);
+        border-bottom-right-radius: 12px;
+        opacity: 0.55;
+      }
+      .resizeHandle:hover { opacity: 1; }
       .header {
         display: flex;
         justify-content: space-between;
@@ -42,7 +58,7 @@
       .closeBtn { background: none; border: none; color: #8a92a3; cursor: pointer; font-size: 16px; line-height: 1; }
       .brand { display: flex; align-items: center; gap: 6px; color: #e8eaed; font-weight: 600; }
       .brand img { width: 16px; height: 16px; border-radius: 4px; }
-      .reel { max-height: 220px; overflow-y: auto; scroll-behavior: smooth; }
+      .reel { flex: 1; min-height: 0; overflow-y: auto; scroll-behavior: smooth; }
       .row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #2a2f3a; }
       .cell { padding: 10px 12px; font-size: 0.9rem; line-height: 1.4; transition: background-color 0.3s ease; }
       .cell.original { border-right: 1px solid #2a2f3a; background: rgba(255, 107, 107, 0.07); }
@@ -132,6 +148,7 @@
       </div>
       <div class="status" id="status"></div>
       <div class="reel" id="reel"></div>
+      <div class="resizeHandle" id="resizeHandle" title="Przeciagnij, aby zmienic rozmiar"></div>
     </div>
   `;
 
@@ -145,6 +162,7 @@
   });
 
   makeDraggable(shadow.getElementById("dragHandle"), wrapEl);
+  makeResizable(shadow.getElementById("resizeHandle"), wrapEl);
 
   const rows = new Map();
 
@@ -272,6 +290,38 @@
 
     document.addEventListener("mouseup", () => {
       dragging = false;
+    });
+  }
+
+  // The reel's height comes from flex (see .reel { flex: 1 }), so growing
+  // .wrap's own height via this handle is all that's needed for the
+  // transcript area to actually get taller - no separate reel-height math.
+  function makeResizable(handle, target) {
+    let resizing = false;
+    let startX = 0;
+    let startY = 0;
+    let startW = 0;
+    let startH = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+      resizing = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = target.getBoundingClientRect();
+      startW = rect.width;
+      startH = rect.height;
+      e.preventDefault();
+      e.stopPropagation(); // don't also start a drag via the header below the cursor
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!resizing) return;
+      target.style.width = `${Math.max(300, startW + (e.clientX - startX))}px`;
+      target.style.height = `${Math.max(180, startH + (e.clientY - startY))}px`;
+    });
+
+    document.addEventListener("mouseup", () => {
+      resizing = false;
     });
   }
 
