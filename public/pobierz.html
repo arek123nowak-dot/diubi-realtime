@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DIUBI — Understand The World</title>
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --muted: #8a92a3;
+    --accent: #4d6bff;
+    --brand-violet: #6f42ff;
+    --brand-blue: #4d6bff;
+    --brand-teal: #00d4b3;
+    --font-display: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px 64px;
+  }
+  .logo { width: 88px; height: 88px; border-radius: 20px; margin-bottom: 20px; }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 2rem;
+    margin: 0 0 6px;
+    background: linear-gradient(90deg, var(--brand-violet), var(--brand-blue), var(--brand-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .tagline { color: var(--muted); font-size: 1.05rem; margin: 0 0 32px; text-align: center; max-width: 480px; }
+  .pitch {
+    max-width: 560px;
+    text-align: center;
+    line-height: 1.6;
+    color: var(--text);
+    margin-bottom: 36px;
+  }
+  .pitch strong { color: var(--accent); }
+  .cta-row { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 360px; margin-bottom: 40px; }
+  .btn {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    text-decoration: none;
+    text-align: center;
+    padding: 16px 20px;
+    border-radius: 18px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    transition: transform 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .steps {
+    max-width: 480px;
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 20px 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .steps h2 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 12px; }
+  .steps ol { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.7; }
+  .steps ol li strong { color: var(--text); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 0.8rem; text-align: center; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <img class="logo" src="logo.png" alt="DIUBI" />
+  <h1>DIUBI</h1>
+  <p class="tagline">Understand the world.</p>
+
+  <p class="pitch">
+    Oglądasz, słuchasz, czytasz w obcym języku i <strong>nie musisz już przerywać</strong>, żeby sprawdzić
+    niezrozumiałe słowo. DIUBI tłumaczy na żywo to, co akurat słuchasz, tłumaczy wybraną frazę w kontekście
+    zdania, w którym padła, i pomaga ją zapamiętać na dłużej.
+  </p>
+
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/arek123nowak-dot/diubi-realtime/releases/latest/download/diubi.apk">
+      📱 Pobierz na Androida (.apk)
+    </a>
+    <a class="btn btn-secondary" href="/">
+      💻 Otwórz w przeglądarce (komputer)
+    </a>
+  </div>
+
+  <div class="steps">
+    <h2>Jak zainstalować na telefonie</h2>
+    <ol>
+      <li>Pobierz plik <strong>.apk</strong> powyższym przyciskiem.</li>
+      <li>Telefon ostrzeże, że to plik spoza Sklepu Play — to normalne przy wersji testowej. Zezwól na
+        instalację z tego źródła, gdy zapyta.</li>
+      <li>Otwórz pobrany plik i zainstaluj.</li>
+      <li>Przy pierwszym uruchomieniu DIUBI zapyta o adres serwera — wpisz dokładnie:
+        <strong>https://diubi.app</strong></li>
+    </ol>
+  </div>
+
+  <footer>
+    Wersja testowa — coś nie działa? Daj znać osobie, która Ci to udostępniła.
+  </footer>
+</body>
+</html>
