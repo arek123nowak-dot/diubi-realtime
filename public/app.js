@@ -928,9 +928,7 @@ function startCapture() {
   const ratio = audioContext.sampleRate / TARGET_SAMPLE_RATE;
 
   processorNode.onaudioprocess = (event) => {
-    // See activeClipPlaybacks above - tab capture would otherwise hear our
-    // own clip playback and feed it right back in as new speech.
-    if (!ws || ws.readyState !== WebSocket.OPEN || activeClipPlaybacks > 0) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     // Confirmed in testing: pausing the video (e.g. to browse Mój pamietnik)
     // doesn't mean true silence on the captured tab - faint background
     // noise occasionally crept just above the amplitude threshold below and
@@ -950,11 +948,19 @@ function startCapture() {
     const channelCount = input.numberOfChannels;
     const length = input.length;
 
-    // Downmix do mono.
+    // Downmix do mono - stays all-zero (silence) while a saved clip plays
+    // back (activeClipPlaybacks > 0). Sending continuous silence instead of
+    // skipping ws.send() entirely keeps the stream to OpenAI gapless - a
+    // real discontinuity (stop, then resume) risks its VAD reading the
+    // stop/resume as an utterance boundary and transcribing a short
+    // hallucinated fragment right as sending resumes, which plain silence
+    // (an ordinary pause in speech) doesn't trigger.
     const mono = new Float32Array(length);
-    for (let ch = 0; ch < channelCount; ch++) {
-      const data = input.getChannelData(ch);
-      for (let i = 0; i < length; i++) mono[i] += data[i] / channelCount;
+    if (activeClipPlaybacks === 0) {
+      for (let ch = 0; ch < channelCount; ch++) {
+        const data = input.getChannelData(ch);
+        for (let i = 0; i < length; i++) mono[i] += data[i] / channelCount;
+      }
     }
 
     // Prosty downsampling (nearest-neighbor) do 16kHz.

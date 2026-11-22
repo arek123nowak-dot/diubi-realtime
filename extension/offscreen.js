@@ -57,16 +57,26 @@ async function startCapture(streamId, targetLang, wsUrl, userId) {
   ws.onclose = () => relay({ type: "status", message: "Polaczenie zamkniete." });
 
   processorNode.onaudioprocess = (event) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN || activeClipPlaybacks > 0) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     const input = event.inputBuffer;
     const channelCount = input.numberOfChannels;
     const length = input.length;
 
+    // While a saved clip plays back (activeClipPlaybacks > 0), mono stays
+    // all-zero (silence) instead of skipping ws.send() entirely like
+    // before - a real GAP in the stream (not just quiet audio) risks the
+    // server's VAD reading the stop/resume as an utterance boundary and
+    // transcribing a short hallucinated fragment right as sending resumes.
+    // Continuous silence is a completely ordinary pattern for a realtime
+    // ASR stream (every natural pause in speech looks the same); an
+    // abrupt discontinuity is not.
     const mono = new Float32Array(length);
-    for (let ch = 0; ch < channelCount; ch++) {
-      const data = input.getChannelData(ch);
-      for (let i = 0; i < length; i++) mono[i] += data[i] / channelCount;
+    if (activeClipPlaybacks === 0) {
+      for (let ch = 0; ch < channelCount; ch++) {
+        const data = input.getChannelData(ch);
+        for (let i = 0; i < length; i++) mono[i] += data[i] / channelCount;
+      }
     }
 
     const outLength = Math.floor(mono.length / ratio);
