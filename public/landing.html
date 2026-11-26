@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DIUBI — Understand the World</title>
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* Layout concept: single scrolling marketing page with a sticky nav;
+     a full-screen onboarding overlay (11 steps, dot progress, Level 1
+     fast-path vs Level 2 deferred) toggles over it via a hash route. */
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1a1f29;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --muted: #8a92a3;
+    --accent: #4d6bff;
+    --violet: #6f42ff;
+    --teal: #00d4b3;
+    --mint: #7ee787;
+    --font-display: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --radius-card: 18px;
+    --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: var(--text);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    overflow-x: hidden;
+  }
+  h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+  p { margin: 0; line-height: 1.6; }
+  a { color: inherit; }
+  img { max-width: 100%; }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+
+  /* ---------- nav ---------- */
+  .nav {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 50;
+    background: rgba(15, 17, 21, 0.85);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-block: 14px;
+    gap: 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; }
+  .brand img { width: 32px; height: 32px; border-radius: 9px; display: block; }
+  .nav-links { display: flex; align-items: center; gap: 28px; font-size: 0.9rem; color: var(--muted); }
+  .nav-links a:hover { color: var(--text); }
+  .nav-cta {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.88rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 9px 18px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  @media (max-width: 720px) { .nav-links { display: none; } }
+
+  /* ---------- hero ---------- */
+  .hero {
+    margin-top: calc(-1 * env(safe-area-inset-top, 0px));
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1px);
+    background:
+      radial-gradient(900px 480px at 50% -10%, rgba(111, 66, 255, 0.22), transparent 60%),
+      radial-gradient(700px 420px at 85% 10%, rgba(0, 212, 179, 0.14), transparent 55%);
+  }
+  .hero-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 88px 0 64px;
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 56px;
+    align-items: center;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 600;
+    margin-bottom: 18px;
+  }
+  .eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+  .hero h1 {
+    font-size: clamp(2.3rem, 5vw, 3.6rem);
+    font-weight: 700;
+    line-height: 1.05;
+    background: linear-gradient(100deg, #fff 30%, var(--teal) 95%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero-sub {
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 500;
+    color: var(--text);
+    margin-top: 18px;
+  }
+  .hero-body { color: var(--muted); font-size: 1.02rem; max-width: 46ch; margin-top: 14px; }
+  .hero-ctas { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+  .btn {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.98rem;
+    border-radius: 14px;
+    padding: 14px 24px;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: var(--shadow-card);
+    transition: transform 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost { background: var(--panel); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+
+  /* phone mockup reusing the real app's reel/cell styling */
+  .phone {
+    justify-self: center;
+    width: min(300px, 80vw);
+    background: #000;
+    border-radius: 40px;
+    padding: 10px;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+    border: 1px solid #2a2f3a;
+  }
+  .phone-screen {
+    background: var(--bg);
+    border-radius: 30px;
+    overflow: hidden;
+    padding: 18px 14px 22px;
+  }
+  .phone-brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 600; font-size: 0.8rem; margin-bottom: 14px; }
+  .phone-brand img { width: 18px; height: 18px; border-radius: 5px; }
+  .reel-demo { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; }
+  .reel-demo-header { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
+  .reel-demo-header span { padding: 7px 10px; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .reel-demo-header span:first-child { border-right: 1px solid var(--border); }
+  .reel-demo-row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
+  .reel-demo-cell { padding: 9px 10px; font-size: 0.72rem; line-height: 1.4; }
+  .reel-demo-cell.o { border-right: 1px solid var(--border); background: rgba(255,107,107,0.07); }
+  .reel-demo-cell.t { background: rgba(76,175,80,0.08); font-weight: 500; }
+  .reel-demo-cell .hl { background: rgba(79,140,255,0.35); border-radius: 3px; padding: 0 1px; }
+  .explain-chip {
+    margin-top: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow-card);
+  }
+  .explain-chip .eh { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 2px; }
+  .explain-chip .ev { font-size: 0.78rem; margin-bottom: 8px; }
+
+  /* ---------- generic section ---------- */
+  section { padding: 76px 0; }
+  .section-head { max-width: 640px; margin: 0 auto 48px; text-align: center; }
+  .section-head h2 { font-size: clamp(1.6rem, 3.4vw, 2.3rem); font-weight: 700; }
+  .section-head p { color: var(--muted); margin-top: 14px; font-size: 1.02rem; }
+
+  /* problem */
+  .problem-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .problem-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 26px 22px;
+  }
+  .problem-card .ic { width: 40px; height: 40px; border-radius: 11px; background: rgba(255,90,90,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+  .problem-card h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 8px; }
+  .problem-card p { color: var(--muted); font-size: 0.92rem; }
+
+  /* solution */
+  .solution-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .solution-card {
+    background: linear-gradient(160deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 28px 24px;
+    box-shadow: var(--shadow-card);
+  }
+  .solution-card .num { font-family: var(--font-display); font-weight: 700; font-size: 0.78rem; color: var(--teal); letter-spacing: 0.08em; }
+  .solution-card h3 { font-size: 1.15rem; margin: 10px 0 8px; }
+  .solution-card p { color: var(--muted); font-size: 0.92rem; }
+
+  /* how it works */
+  .steps-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; position: relative; }
+  .step-item { text-align: center; padding: 0 16px; position: relative; }
+  .step-circle {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--panel); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-weight: 700; color: var(--accent);
+    margin: 0 auto 16px;
+  }
+  .step-item h3 { font-size: 1.02rem; margin-bottom: 6px; }
+  .step-item p { color: var(--muted); font-size: 0.88rem; }
+
+  /* use cases */
+  .usecase-row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .usecase-chip {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 10px 18px;
+    font-size: 0.88rem;
+    color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* final cta */
+  .final-cta {
+    text-align: center;
+    background: linear-gradient(145deg, rgba(111,66,255,0.16), rgba(0,212,179,0.1));
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 64px 24px;
+  }
+  .final-cta h2 { font-size: clamp(1.7rem, 3.6vw, 2.5rem); margin-bottom: 14px; }
+  .final-cta p { color: var(--muted); margin-bottom: 28px; }
+
+  footer { border-top: 1px solid var(--border); padding: 40px 0 calc(40px + env(safe-area-inset-bottom, 0px)); }
+  .footer-inner { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; align-items: center; }
+  .footer-links { display: flex; gap: 22px; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); }
+  .footer-links a:hover { color: var(--text); }
+  .footer-meta { font-size: 0.78rem; color: var(--muted); }
+
+  @media (max-width: 860px) {
+    .hero-inner { grid-template-columns: 1fr; padding-top: 48px; }
+    .phone { order: -1; margin: 0 auto 8px; }
+    .problem-grid, .solution-grid, .steps-row { grid-template-columns: 1fr; gap: 16px; }
+  }
+
+  /* ---------- onboarding overlay ---------- */
+  .ob-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+  }
+  .ob-overlay.open { display: flex; }
+  .ob-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px max(16px, env(safe-area-inset-left,0px)) 10px;
+    padding-top: calc(env(safe-area-inset-top,0px) + 16px);
+  }
+  .ob-dots { display: flex; gap: 6px; flex-wrap: wrap; max-width: 60%; }
+  .ob-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .ob-dot.l2 { background: transparent; border: 1.5px dashed var(--border); }
+  .ob-dot.done { background: var(--accent); }
+  .ob-dot.current { background: var(--teal); width: 18px; border-radius: 4px; }
+  .ob-skip { background: none; border: none; color: var(--muted); font-size: 0.85rem; cursor: pointer; font-family: var(--font-body); }
+  .ob-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 10px 20px 20px; }
+  .ob-card { max-width: 460px; width: 100%; text-align: center; }
+  .ob-level-tag {
+    display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 999px; margin-bottom: 18px;
+  }
+  .ob-level-tag.l1 { background: rgba(77,107,255,0.15); color: #9db1ff; }
+  .ob-level-tag.l2 { background: rgba(138,146,163,0.15); color: var(--muted); }
+  .ob-card h2 { font-size: 1.5rem; margin-bottom: 10px; }
+  .ob-card .ob-text { color: var(--muted); font-size: 0.95rem; margin-bottom: 26px; }
+  .ob-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 8px; }
+  .ob-pill {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; font-size: 0.88rem; cursor: pointer; font-family: var(--font-body); color: var(--text);
+  }
+  .ob-pill.sel { border-color: var(--accent); background: rgba(77,107,255,0.14); color: #c6d2ff; }
+  .ob-bottom {
+    display: flex; gap: 12px; padding: 14px max(16px, env(safe-area-inset-left,0px)) calc(18px + env(safe-area-inset-bottom,0px));
+    border-top: 1px solid var(--border);
+  }
+  .ob-bottom .btn { flex: 1; justify-content: center; }
+  .ob-logo-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
+  .ob-logo-row img { width: 56px; height: 56px; border-radius: 16px; }
+  .ob-spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid var(--border); border-top-color: var(--teal);
+    margin: 0 auto 22px; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ob-prefs-echo { font-size: 0.82rem; color: var(--muted); margin-top: 4px; }
+  .ob-prefs-echo b { color: var(--text); }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="brand"><img src="logo.png" alt="">DIUBI</div>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#product">Product</a>
+    </div>
+    <button class="nav-cta" onclick="openOnboarding()">Get started</button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-inner wrap">
+    <div>
+      <div class="eyebrow">AI Content Understanding</div>
+      <h1>Understand the world.</h1>
+      <p class="hero-sub">Don't just consume content. Understand it.</p>
+      <p class="hero-body">DIUBI helps you understand videos, podcasts and ideas from around the world. AI gives you the context, meaning and knowledge behind what you watch and hear.</p>
+      <div class="hero-ctas">
+        <button class="btn btn-primary" onclick="openOnboarding()">Get started</button>
+        <a class="btn btn-ghost" href="#how">Discover how it works</a>
+      </div>
+    </div>
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="phone-brand"><img src="logo.png" alt="">DIUBI</div>
+        <div class="reel-demo">
+          <div class="reel-demo-header"><span>Original</span><span>Translation</span></div>
+          <div class="reel-demo-row">
+            <div class="reel-demo-cell o">...pero lo importante es entender el <span class="hl">contexto</span>.</div>
+            <div class="reel-demo-cell t">...but what matters is understanding the <span class="hl">context</span>.</div>
+          </div>
+          <div class="reel-demo-row">
+            <div class="reel-demo-cell o">No es solo vocabulario, es significado real.</div>
+            <div class="reel-demo-cell t">It's not just vocabulary, it's real meaning.</div>
+          </div>
+        </div>
+        <div class="explain-chip">
+          <div class="eh">Meaning in this sentence</div>
+          <div class="ev">"Contexto" here means the surrounding situation that gives a word its real meaning — not a dictionary definition.</div>
+          <div class="eh">Example</div>
+          <div class="ev">El contexto cambia todo. — Context changes everything.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>The world is full of knowledge. But understanding it is not always easy.</h2>
+    </div>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="ic">🌐</div>
+        <h3>Language barriers</h3>
+        <p>Great content exists in every language — but most of it stays out of reach if you don't speak it fluently.</p>
+      </div>
+      <div class="problem-card">
+        <div class="ic">🧩</div>
+        <h3>Missing context</h3>
+        <p>A translation gives you words. It rarely gives you the meaning, tone or reference behind them.</p>
+      </div>
+      <div class="problem-card">
+        <div class="ic">📚</div>
+        <h3>Too much content, too little understanding</h3>
+        <p>There's more to watch and listen to than ever — and less time to actually absorb any of it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="background:var(--panel-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>One intelligent layer. More understanding.</h2>
+      <p>DIUBI doesn't replace the platforms you already use. It sits on top of them.</p>
+    </div>
+    <div class="solution-grid">
+      <div class="solution-card">
+        <div class="num">01</div>
+        <h3>Understand</h3>
+        <p>Grasp the real meaning of what's being said — in context, not just in translation.</p>
+      </div>
+      <div class="solution-card">
+        <div class="num">02</div>
+        <h3>Discover</h3>
+        <p>Uncover the context, references and connections behind the content you're consuming.</p>
+      </div>
+      <div class="solution-card">
+        <div class="num">03</div>
+        <h3>Learn</h3>
+        <p>Save what matters and come back to it — understanding that actually sticks.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <h2>How DIUBI works</h2>
+    </div>
+    <div class="steps-row">
+      <div class="step-item">
+        <div class="step-circle">1</div>
+        <h3>Choose content</h3>
+        <p>Pick a video, podcast or any material you're curious about.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">2</div>
+        <h3>Let DIUBI help</h3>
+        <p>DIUBI listens along and surfaces meaning as it happens — live.</p>
+      </div>
+      <div class="step-item">
+        <div class="step-circle">3</div>
+        <h3>Understand more</h3>
+        <p>Tap anything unclear. Save it. Come back and make it stick.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="usecases" style="background:var(--panel-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Built for anything you're curious about</h2>
+    </div>
+    <div class="usecase-row">
+      <div class="usecase-chip">💼 Business & Entrepreneurship</div>
+      <div class="usecase-chip">🤖 Technology & AI</div>
+      <div class="usecase-chip">🔬 Science & Education</div>
+      <div class="usecase-chip">🗣 Languages & Culture</div>
+      <div class="usecase-chip">🎙 Podcasts & Interviews</div>
+    </div>
+  </div>
+</section>
+
+<section id="product">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>See it in action</h2>
+      <p>Real DIUBI, not a mockup of a future feature.</p>
+    </div>
+    <div style="display:flex; justify-content:center;">
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="phone-brand"><img src="logo.png" alt="">DIUBI</div>
+          <div class="reel-demo">
+            <div class="reel-demo-header"><span>Original</span><span>Translation</span></div>
+            <div class="reel-demo-row">
+              <div class="reel-demo-cell o">A ver, <span class="hl">honestamente</span> no sé qué pensar.</div>
+              <div class="reel-demo-cell t">Let's see, <span class="hl">honestly</span> I don't know what to think.</div>
+            </div>
+          </div>
+          <div class="explain-chip">
+            <div class="eh">Translation</div>
+            <div class="ev">honestly</div>
+            <div class="eh">Pronunciation</div>
+            <div class="ev">o·nes·ta·men·te</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="final-cta">
+      <h2>Your world. Without limits.</h2>
+      <p>Start understanding more today.</p>
+      <button class="btn btn-primary" onclick="openOnboarding()">Get started</button>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap footer-inner">
+    <div class="brand"><img src="logo.png" alt="" style="width:24px;height:24px;border-radius:7px;">DIUBI</div>
+    <div class="footer-links">
+      <a href="#">About</a>
+      <a href="#">Privacy Policy</a>
+      <a href="#">Terms of Service</a>
+      <a href="#">Contact</a>
+    </div>
+    <div class="footer-meta">v0.1 (early access) · © DIUBI</div>
+  </div>
+</footer>
+
+<!-- ============================================================
+     ONBOARDING PREVIEW (11 screens — Level 1 fast path + Level 2
+     deferred). Click-through only; nothing here is wired to a
+     real backend — this is a design-review artifact.
+     ============================================================ -->
+<div class="ob-overlay" id="obOverlay">
+  <div class="ob-top">
+    <div class="ob-dots" id="obDots"></div>
+    <button class="ob-skip" id="obSkipBtn" onclick="obSkip()">Skip</button>
+  </div>
+  <div class="ob-body"><div class="ob-card" id="obCard"></div></div>
+  <div class="ob-bottom" id="obBottom"></div>
+</div>
+
+<script>
+var LOGO = "logo.png";
+
+// Same key and generation logic as public/app.js's getUserId() - sharing
+// localStorage on the same origin means whatever ID gets created here is
+// the exact same one /app finds already saved, with zero extra plumbing.
+function getUserId() {
+  var id = localStorage.getItem("diubi_user_id");
+  if (!id) {
+    id = generateUuid();
+    localStorage.setItem("diubi_user_id", id);
+  }
+  return id;
+}
+function generateUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    var r = (Math.random() * 16) | 0;
+    var v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function track(event, props) {
+  fetch("/api/analytics/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event: event, userId: getUserId(), props: props || {} }),
+  }).catch(function () {}); // best-effort - never blocks the UI
+}
+
+function savePreferences(patch) {
+  Object.assign(obState.saved, patch);
+  return fetch("/api/preferences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ userId: getUserId() }, obState.saved)),
+  }).catch(function () {});
+}
+
+var obState = {
+  step: 0,
+  interfaceLang: null,
+  targetLangs: [],
+  interests: [],
+  goals: [],
+  level: null,
+  learningPrefs: [],
+  saved: {} // mirrors what's actually been POSTed, so savePreferences() patches instead of overwriting
+};
+var onboardingAlreadyDone = false;
+
+// Checked once on page load: a returning visitor who already finished
+// onboarding skips straight to the app instead of seeing it again, and
+// anyone who left partway through resumes at their saved step instead of
+// restarting from Welcome.
+fetch("/api/preferences?userId=" + encodeURIComponent(getUserId()))
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (prefs) {
+    if (!prefs) return;
+    obState.saved = prefs;
+    if (prefs.onboardingCompletedAt) {
+      onboardingAlreadyDone = true;
+      return;
+    }
+    if (prefs.interfaceLang) obState.interfaceLang = prefs.interfaceLang;
+    if (prefs.targetLangs) obState.targetLangs = prefs.targetLangs;
+    if (prefs.interests) obState.interests = prefs.interests;
+    if (prefs.goals) obState.goals = prefs.goals;
+    if (prefs.learningPrefs) obState.learningPrefs = prefs.learningPrefs;
+    if (typeof prefs.onboardingStep === "number") obState.step = prefs.onboardingStep;
+  })
+  .catch(function () {});
+
+function openOnboarding() {
+  if (onboardingAlreadyDone) {
+    window.location.href = "/app";
+    return;
+  }
+  document.getElementById('obOverlay').classList.add('open');
+  if (obState.step === 0) track("onboarding_started");
+  obRender();
+}
+function closeOnboarding() {
+  document.getElementById('obOverlay').classList.remove('open');
+}
+function finishOnboarding() {
+  track('onboarding_completed');
+  savePreferences({ onboardingStep: OB_STEPS.length - 1, onboardingCompletedAt: Date.now() })
+    .then(function () { window.location.href = '/app'; });
+}
+
+function toggleIn(arr, val, single) {
+  var i = arr.indexOf(val);
+  if (single) { return [val]; }
+  if (i === -1) arr.push(val); else arr.splice(i, 1);
+  return arr;
+}
+
+var OB_STEPS = [
+  { id: 'welcome', level: 1 },
+  { id: 'value', level: 1 },
+  { id: 'iface-lang', level: 1 },
+  { id: 'target-langs', level: 1 },
+  { id: 'interests', level: 1 },
+  { id: 'goals', level: 1 },
+  { id: 'proficiency', level: 2 },
+  { id: 'learning-prefs', level: 2 },
+  { id: 'preparing', level: 1 },
+  { id: 'wow', level: 1 },
+  { id: 'done', level: 1 }
+];
+
+function obDotsHtml() {
+  return OB_STEPS.map(function (s, i) {
+    var cls = 'ob-dot';
+    if (s.level === 2) cls += ' l2';
+    if (i < obState.step) cls += ' done';
+    if (i === obState.step) cls += ' current';
+    return '<div class="' + cls + '"></div>';
+  }).join('');
+}
+
+// Fired (in addition to the generic onboarding_step_completed) when
+// *leaving* a step going forward - maps this onboarding's step ids to the
+// specific analytics event names the product spec calls for.
+var OB_STEP_EVENT = {
+  'iface-lang': function () { track('language_selected', { which: 'interface', value: obState.interfaceLang }); },
+  'target-langs': function () { track('language_selected', { which: 'target', value: obState.targetLangs }); },
+  'interests': function () { track('interests_selected', { value: obState.interests }); },
+  'goals': function () { track('goal_selected', { value: obState.goals }); },
+  'wow': function () { track('first_content_completed'); }
+};
+
+function obGo(delta) {
+  var leaving = OB_STEPS[obState.step];
+  if (delta > 0 && leaving) {
+    track('onboarding_step_completed', { step: leaving.id });
+    if (OB_STEP_EVENT[leaving.id]) OB_STEP_EVENT[leaving.id]();
+    savePreferences({
+      interfaceLang: obState.interfaceLang,
+      targetLangs: obState.targetLangs,
+      interests: obState.interests,
+      goals: obState.goals,
+      learningPrefs: obState.learningPrefs,
+      onboardingStep: Math.min(OB_STEPS.length - 1, obState.step + delta)
+    });
+  }
+  obState.step = Math.max(0, Math.min(OB_STEPS.length - 1, obState.step + delta));
+  obRender();
+}
+function obSkip() {
+  // Skips only the CURRENT step's own answer, still advances - matches
+  // "mozliwosc pominiecia" for non-required questions (interests, goals,
+  // proficiency, learning prefs). Welcome/value/wow/done have no skip
+  // button shown (see obRender's skipBtn visibility toggle).
+  track('onboarding_step_skipped', { step: OB_STEPS[obState.step].id });
+  obGo(1);
+}
+
+function obRender() {
+  var idx = obState.step;
+  var step = OB_STEPS[idx];
+  document.getElementById('obDots').innerHTML = obDotsHtml();
+  var skipBtn = document.getElementById('obSkipBtn');
+  skipBtn.style.visibility = ['welcome','value','preparing','wow','done'].indexOf(step.id) === -1 ? 'visible' : 'hidden';
+
+  var card = document.getElementById('obCard');
+  var bottom = document.getElementById('obBottom');
+  var levelTag = '<div class="ob-level-tag ' + (step.level === 1 ? 'l1' : 'l2') + '">' +
+    (step.level === 1 ? 'Poziom 1 — pierwsze uruchomienie' : 'Poziom 2 — pokazane pozniej, w aplikacji') + '</div>';
+
+  if (step.id === 'welcome') {
+    card.innerHTML =
+      '<div class="ob-logo-row"><img src="' + LOGO + '" alt=""></div>' +
+      '<h2>Welcome to DIUBI</h2>' +
+      '<p class="ob-text">Understand more. Discover more. Learn naturally.</p>';
+    bottom.innerHTML = '<button class="btn btn-primary" onclick="obGo(1)">Get started</button>';
+  } else if (step.id === 'value') {
+    card.innerHTML = levelTag +
+      '<h2>The world has no language barriers.</h2>' +
+      '<p class="ob-text">DIUBI helps you understand the content you love, discover new ideas and learn from the world around you.</p>' +
+      '<div class="reel-demo" style="text-align:left; max-width:360px; margin:0 auto;">' +
+      '<div class="reel-demo-header"><span>Original</span><span>Translation</span></div>' +
+      '<div class="reel-demo-row"><div class="reel-demo-cell o">Es increible lo que se aprende asi.</div><div class="reel-demo-cell t">It\'s amazing what you learn this way.</div></div>' +
+      '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'iface-lang') {
+    var langs = ['Polski','English','Espanol','Deutsch'];
+    card.innerHTML = levelTag + '<h2>What language do you prefer?</h2><p class="ob-text">This is the language DIUBI uses to talk to you — not the one you want to understand.</p>' +
+      '<div class="ob-grid">' + langs.map(function(l){
+        return '<button class="ob-pill' + (obState.interfaceLang===l?' sel':'') + '" onclick="obState.interfaceLang=\'' + l + '\'; obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'target-langs') {
+    var tl = ['English','Spanish','German','French','Italian','Other'];
+    card.innerHTML = levelTag + '<h2>Which languages do you want to understand?</h2><p class="ob-text">Pick one or more. You can change this later.</p>' +
+      '<div class="ob-grid">' + tl.map(function(l){
+        var sel = obState.targetLangs.indexOf(l) !== -1;
+        return '<button class="ob-pill' + (sel?' sel':'') + '" onclick="obState.targetLangs=toggleIn(obState.targetLangs,\'' + l + '\',false); obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'interests') {
+    var ints = ['Business','Technology & AI','Science','Education','Culture','History','Health & Lifestyle','Entertainment','Other'];
+    card.innerHTML = levelTag + '<h2>What are you curious about?</h2><p class="ob-text">Optional — helps DIUBI suggest content you\'ll actually want.</p>' +
+      '<div class="ob-grid">' + ints.map(function(l){
+        var sel = obState.interests.indexOf(l) !== -1;
+        return '<button class="ob-pill' + (sel?' sel':'') + '" onclick="obState.interests=toggleIn(obState.interests,\'' + l + '\',false); obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'goals') {
+    var goals = ['Understand content in other languages','Learn new languages naturally','Understand complex topics','Discover new knowledge','Improve my listening and comprehension'];
+    card.innerHTML = levelTag + '<h2>What would you like DIUBI to help you with?</h2>' +
+      '<div class="ob-grid">' + goals.map(function(l){
+        var sel = obState.goals.indexOf(l) !== -1;
+        return '<button class="ob-pill' + (sel?' sel':'') + '" onclick="obState.goals=toggleIn(obState.goals,\'' + l + '\',false); obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'proficiency') {
+    var levels = ['Beginner','Elementary','Intermediate','Advanced','Fluent','Not sure yet'];
+    card.innerHTML = levelTag + '<h2>How comfortable are you with ' + (obState.targetLangs[0] || 'this language') + '?</h2>' +
+      '<p class="ob-text">Shown later, the first time it\'s actually relevant (e.g. before your first Trening exercise) — not during first launch.</p>' +
+      '<div class="ob-grid">' + levels.map(function(l){
+        return '<button class="ob-pill' + (obState.level===l?' sel':'') + '" onclick="obState.level=\'' + l + '\'; obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'learning-prefs') {
+    var prefs = ['Listening','Watching videos','Reading','Repeating and practicing','Learning through real conversations'];
+    card.innerHTML = levelTag + '<h2>How do you like to learn?</h2>' +
+      '<p class="ob-text">Also deferred — personalization data only, not required to use DIUBI.</p>' +
+      '<div class="ob-grid">' + prefs.map(function(l){
+        var sel = obState.learningPrefs.indexOf(l) !== -1;
+        return '<button class="ob-pill' + (sel?' sel':'') + '" onclick="obState.learningPrefs=toggleIn(obState.learningPrefs,\'' + l + '\',false); obRender();">' + l + '</button>';
+      }).join('') + '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'preparing') {
+    card.innerHTML = '<div class="ob-spinner"></div><h2>Your DIUBI experience is taking shape.</h2>' +
+      '<p class="ob-prefs-echo">' +
+      (obState.targetLangs.length ? 'Understanding: <b>' + obState.targetLangs.join(', ') + '</b><br>' : '') +
+      (obState.interests.length ? 'Curious about: <b>' + obState.interests.join(', ') + '</b>' : '') +
+      '</p>';
+    bottom.innerHTML = '<button class="btn btn-primary" onclick="obGo(1)" style="width:100%">Continue</button>';
+  } else if (step.id === 'wow') {
+    if (!obState._wowStarted) { obState._wowStarted = true; track('first_content_started'); }
+    card.innerHTML = '<h2>Let\'s understand something new.</h2><p class="ob-text">Paste a link, or try this demo clip.</p>' +
+      '<div class="reel-demo" style="text-align:left; max-width:380px; margin:0 auto 14px;">' +
+      '<div class="reel-demo-header"><span>Original</span><span>Translation</span></div>' +
+      '<div class="reel-demo-row"><div class="reel-demo-cell o">El <span class="hl">contexto</span> lo es todo.</div><div class="reel-demo-cell t">The <span class="hl">context</span> is everything.</div></div>' +
+      '</div>' +
+      '<div class="explain-chip" style="text-align:left; max-width:380px; margin:0 auto;">' +
+      '<div class="eh">Meaning in this sentence</div><div class="ev">Said after a misunderstanding — "contexto" means the full situation, not just the words.</div>' +
+      '</div>';
+    bottom.innerHTML = '<button class="btn btn-ghost" onclick="obGo(-1)">Back</button><button class="btn btn-primary" onclick="obGo(1)">Continue</button>';
+  } else if (step.id === 'done') {
+    card.innerHTML = '<div class="ob-logo-row"><img src="' + LOGO + '" alt=""></div><h2>You\'re ready to understand the world.</h2>' +
+      '<p class="ob-text">Your journey with DIUBI starts now.</p>';
+    bottom.innerHTML = '<button class="btn btn-primary" style="width:100%" onclick="finishOnboarding()">Explore DIUBI</button>';
+  }
+}
+</script>
+</body>
+</html>

@@ -119,7 +119,7 @@ class MainActivity : AppCompatActivity() {
 
         val savedUrl = ServerConfig.getUrl(this)
         if (savedUrl != null) {
-            webView.loadUrl(savedUrl)
+            webView.loadUrl(appUrl(savedUrl))
         } else {
             showServerUrlDialog()
         }
@@ -178,12 +178,24 @@ class MainActivity : AppCompatActivity() {
                 val url = input.text.toString().trim()
                 if (url.isNotEmpty()) {
                     ServerConfig.setUrl(this, url)
-                    webView.loadUrl(url)
+                    webView.loadUrl(appUrl(url))
                 } else {
                     showServerUrlDialog()
                 }
             }
             .show()
+    }
+
+    // The server now serves a public landing/onboarding page at its bare
+    // root (see server.js) - the actual app the native shell wraps lives at
+    // /app instead, same as it always has under the hood. This is the only
+    // place that distinction needs to exist: ServerConfig keeps storing and
+    // displaying the plain address the user actually typed (e.g.
+    // https://diubi.app), so nobody has to retype anything after this
+    // update - only where we actually load it gets /app appended.
+    private fun appUrl(base: String): String {
+        val trimmed = base.trimEnd('/')
+        return if (trimmed.endsWith("/app")) trimmed else "$trimmed/app"
     }
 
     inner class JsBridge {

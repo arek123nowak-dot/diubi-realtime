@@ -9,6 +9,8 @@ const { getUsageMinutes, addUsageMs } = require("./usage");
 const { logAttempt, getTodayStats } = require("./trainingLog");
 const { CLIPS_DIR, saveClip, deleteClip, pcm16ToWav } = require("./clips");
 const { listContent, upsertContent } = require("./userContent");
+const { getPreferences, savePreferences } = require("./preferences");
+const { logEvent } = require("./analytics");
 const { getYouTubeCaptions } = require("./youtubeCaptions");
 const { searchYouTube, isConfigured: youtubeSearchConfigured } = require("./youtubeSearch");
 
@@ -77,6 +79,15 @@ const PRICING_USD_PER_1M = {
 };
 
 const app = express();
+// Explicit routes, registered before express.static below so they win over
+// its default "serve index.html at /" behavior. Landing page at / (public-
+// facing marketing, onboarding) is a separate file from the actual app at
+// /app (unchanged since before this split) - no files moved, so every other
+// existing reference (app.js, logo.png, favicon.png, relative paths inside
+// index.html) keeps working exactly as before. See MainActivity.kt for the
+// matching Android-side fix (always loads {server}/app, not bare {server}).
+app.get("/", (req, res) => res.sendFile("landing.html", { root: "public" }));
+app.get("/app", (req, res) => res.sendFile("index.html", { root: "public" }));
 app.use(express.static("public"));
 app.use("/clips", express.static(CLIPS_DIR));
 // Default 100kb is too small for a base64-encoded pronunciation-practice
@@ -427,6 +438,39 @@ app.get("/api/content", (req, res) => {
     return res.status(400).json({ error: "Brak userId." });
   }
   res.json(listContent(userId));
+});
+
+// Onboarding preferences (public/landing.html) - keyed by the same
+// anonymous userId as everything else here, no accounts involved. See
+// preferences.js; GET returns null (not 404) for a userId with no record
+// yet, since "nobody's saved anything" is the normal first-visit case,
+// not an error.
+app.get("/api/preferences", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  res.json(getPreferences(userId));
+});
+
+app.post("/api/preferences", (req, res) => {
+  const { userId, ...patch } = req.body || {};
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak userId." });
+  }
+  res.json(savePreferences(userId, patch));
+});
+
+// Own, minimal analytics (no external provider) - see analytics.js for the
+// event allow-list this rejects anything outside of.
+app.post("/api/analytics/event", (req, res) => {
+  const { event, userId, props } = req.body || {};
+  if (!event || typeof event !== "string" || !userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "Brak event lub userId." });
+  }
+  const entry = logEvent(event, userId, props);
+  if (!entry) return res.status(400).json({ error: "Nieznane zdarzenie lub zbyt duze props." });
+  res.status(204).end();
 });
 
 app.delete("/api/phrases/:id", (req, res) => {
