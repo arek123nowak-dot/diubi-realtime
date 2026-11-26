@@ -1357,10 +1357,31 @@ function explainFieldsHtml(data) {
     <div class="field-label">Tlumaczenie</div>
     <div class="field-value">${escapeHtml(data.translation)}</div>
     ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
+    ${data.whyItMatters ? `<div class="field-label">Dlaczego to wazne</div><div class="field-value">${escapeHtml(data.whyItMatters)}</div>` : ""}
+    ${relatedExpressionsHtml(data.relatedExpressions)}
     ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
     ${data.example && data.exampleTranslation ? `<div class="field-value-sub">${escapeHtml(data.exampleTranslation)}</div>` : ""}
     ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
   `;
+}
+
+/** Up to 3 {expression, translation, example} items from explainPhrase's
+ * "relatedExpressions" - absent/empty on older saved phrases (field didn't
+ * exist yet), so this renders nothing rather than an empty heading. */
+function relatedExpressionsHtml(items) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  const rows = items
+    .map(
+      (it) => `
+        <div class="related-expr">
+          <span class="related-expr-main">${escapeHtml(it.expression)}</span>${
+            it.translation ? ` <span class="related-expr-translation">— ${escapeHtml(it.translation)}</span>` : ""
+          }
+          ${it.example ? `<div class="field-value-sub">${escapeHtml(it.example)}</div>` : ""}
+        </div>`
+    )
+    .join("");
+  return `<div class="field-label">Podobne wyrazenia</div>${rows}`;
 }
 
 /** Translation of the WHOLE sentence the phrase came from - distinct from

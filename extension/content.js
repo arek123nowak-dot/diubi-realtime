@@ -122,6 +122,10 @@
       .modal-card .field-label { color: #8a92a3; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 3px; }
       .modal-card .field-value { font-size: 0.95rem; line-height: 1.45; }
       .modal-card .field-value-sub { color: #8a92a3; font-size: 0.85rem; margin-top: 2px; }
+      .related-expr { margin-top: 8px; }
+      .related-expr:first-of-type { margin-top: 0; }
+      .related-expr-main { font-weight: 600; }
+      .related-expr-translation { color: #8a92a3; }
       .clip-player { width: 100%; height: 34px; margin-top: 4px; }
       .modal-card .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
       .modal-card .modal-actions button { flex: 1; padding: 10px 14px; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
@@ -534,10 +538,29 @@
       <div class="field-label">Tlumaczenie</div>
       <div class="field-value">${escapeHtml(data.translation)}</div>
       ${data.meaning ? `<div class="field-label">Znaczenie w tym zdaniu</div><div class="field-value">${escapeHtml(data.meaning)}</div>` : ""}
+      ${data.whyItMatters ? `<div class="field-label">Dlaczego to wazne</div><div class="field-value">${escapeHtml(data.whyItMatters)}</div>` : ""}
+      ${relatedExpressionsHtml(data.relatedExpressions)}
       ${data.example ? `<div class="field-label">Przyklad</div><div class="field-value">${escapeHtml(data.example)}</div>` : ""}
       ${data.example && data.exampleTranslation ? `<div class="field-value-sub">${escapeHtml(data.exampleTranslation)}</div>` : ""}
       ${data.pronunciation ? `<div class="field-label">Wymowa</div><div class="field-value">${escapeHtml(data.pronunciation)}</div>` : ""}
     `;
+  }
+
+  /** Same rendering as public/app.js's relatedExpressionsHtml - see there. */
+  function relatedExpressionsHtml(items) {
+    if (!Array.isArray(items) || items.length === 0) return "";
+    const rows = items
+      .map(
+        (it) => `
+          <div class="related-expr">
+            <span class="related-expr-main">${escapeHtml(it.expression)}</span>${
+              it.translation ? ` <span class="related-expr-translation">— ${escapeHtml(it.translation)}</span>` : ""
+            }
+            ${it.example ? `<div class="field-value-sub">${escapeHtml(it.example)}</div>` : ""}
+          </div>`
+      )
+      .join("");
+    return `<div class="field-label">Podobne wyrazenia</div>${rows}`;
   }
 
   // tabCapture hears everything the tab plays, including our own clip

@@ -510,6 +510,8 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
             }. Odpowiedz WYLACZNIE czystym obiektem JSON (bez markdown, bez komentarzy) z polami: ` +
             `"translation" (krotkie tlumaczenie samej frazy na jezyk ${targetLang}), ` +
             `"meaning" (1-2 zdania w jezyku ${targetLang} wyjasniajace co ta fraza znaczy KONKRETNIE w podanym kontekscie, nie ogolna definicja slownikowa), ` +
+            `"whyItMatters" (1-3 zdania w jezyku ${targetLang} wyjasniajace sens/intencje/implikacje CALEJ WYPOWIEDZI, w której ta fraza padla - nie powtarzaj tlumaczenia ani "meaning", skup sie na tym co autor chce przez to przekazac; opieraj sie WYLACZNIE na podanym zdaniu, nigdy nie zgaduj faktow spoza niego - jesli samo zdanie nie daje dosc kontekstu zeby to ocenic, napisz to wprost zamiast zgadywac), ` +
+            `"relatedExpressions" (tablica 2-3 obiektow {"expression","translation","example"} - naturalne, uzyteczne zwroty powiazane znaczeniowo z fraza, ktorych user realnie moglby uzyc; "expression" w jezyku oryginalnej frazy, "translation" w jezyku ${targetLang}, "example" to krótkie nowe zdanie w jezyku oryginalnej frazy uzywajace tego zwrotu - NIE przypadkowe synonimy, tylko zwroty faktycznie bliskoznaczne/powiazane), ` +
             `"example" (jedno NOWE przykladowe zdanie w jezyku oryginalnej frazy, inne niz podany kontekst, uzywajace tej frazy), ` +
             `"exampleTranslation" (tlumaczenie TEGO WLASNIE przykladowego zdania na jezyk ${targetLang}), ` +
             `"pronunciation" (wymowa frazy - IPA jesli to sensowne dla tego jezyka, inaczej prosty zapis fonetyczny; pusty string jesli nie da sie sensownie podac).`,
@@ -534,10 +536,28 @@ async function explainPhrase(phrase, contextSentence, sourceLang, targetLang) {
     phrase,
     translation: parsed.translation || "",
     meaning: parsed.meaning || "",
+    whyItMatters: parsed.whyItMatters || "",
+    relatedExpressions: sanitizeRelatedExpressions(parsed.relatedExpressions),
     example: parsed.example || "",
     exampleTranslation: parsed.exampleTranslation || "",
     pronunciation: parsed.pronunciation || "",
   };
+}
+
+/** Defends explainPhrase's caller against a malformed/missing
+ * "relatedExpressions" from the model - not an array, items with the wrong
+ * shape, too many of them - so one odd completion can't break the endpoint
+ * or hand the client junk to render. */
+function sanitizeRelatedExpressions(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object" && typeof item.expression === "string" && item.expression.trim())
+    .slice(0, 3)
+    .map((item) => ({
+      expression: item.expression.trim(),
+      translation: typeof item.translation === "string" ? item.translation.trim() : "",
+      example: typeof item.example === "string" ? item.example.trim() : "",
+    }));
 }
 
 /**
